@@ -1,25 +1,25 @@
-[2025-12-03 00:20:50,135] [INFO] Application starting...
-[2025-12-03 00:21:47,859] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-medium
-[2025-12-03 00:22:03,288] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-medium
-[2025-12-03 00:22:03,288] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-medium
-[2025-12-03 00:22:03,288] [INFO] Device: cpu, Compute type: int8
-[2025-12-03 00:22:06,144] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 00:22:06,145] [INFO] Input: D:\AOL\Contradictions of the Mind.mp4
-[2025-12-03 00:22:06,145] [INFO] Output: D:\AOL\Contradictions of the Mind.txt
-[2025-12-03 00:22:06,146] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
-[2025-12-03 00:22:08,905] [INFO] Processing audio with duration 40:07.027
-[2025-12-03 00:22:09,023] [ERROR] Error processing Contradictions of the Mind.mp4: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
-[2025-12-03 00:22:09,023] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 00:22:09,023] [INFO] Input: D:\AOL\Learn chanting with Bhanumathi Narasimhan.webm
-[2025-12-03 00:22:09,023] [INFO] Output: D:\AOL\Learn chanting with Bhanumathi Narasimhan.txt
-[2025-12-03 00:22:09,023] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
-[2025-12-03 00:22:09,023] [ERROR] Traceback (most recent call last):
+[2025-12-03 00:47:06,093] [INFO] Application starting...
+[2025-12-03 00:47:26,163] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-tiny
+[2025-12-03 00:47:36,377] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-tiny
+[2025-12-03 00:47:36,377] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-tiny
+[2025-12-03 00:47:36,382] [INFO] Device: cpu, Compute type: int8
+[2025-12-03 00:47:36,690] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:47:36,690] [INFO] Input: D:\AOL\Contradictions of the Mind.mp4
+[2025-12-03 00:47:36,690] [INFO] Output: D:\AOL\Contradictions of the Mind.txt
+[2025-12-03 00:47:36,690] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
+[2025-12-03 00:47:39,447] [INFO] Processing audio with duration 40:07.027
+[2025-12-03 00:47:39,571] [ERROR] Error processing Contradictions of the Mind.mp4: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
+[2025-12-03 00:47:39,571] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:47:39,572] [INFO] Input: D:\AOL\Learn chanting with Bhanumathi Narasimhan.webm
+[2025-12-03 00:47:39,572] [INFO] Output: D:\AOL\Learn chanting with Bhanumathi Narasimhan.txt
+[2025-12-03 00:47:39,573] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
+[2025-12-03 00:47:39,575] [ERROR] Traceback (most recent call last):
   File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\workers.py", line 123, in _job
     result = self._transcriber.transcribe_file(
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 145, in transcribe_file
-    beam_size=bs,
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 126, in transcribe_file
-    raise FileNotFoundError(f"Input file not found: {input_path}")
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 150, in transcribe_file
+    raise e
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 131, in transcribe_file
+    segments, info = self._model.transcribe(
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\transcribe.py", line 890, in transcribe
     speech_chunks = get_speech_timestamps(audio, vad_parameters)
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\vad.py", line 89, in get_speech_timestamps
@@ -32,18 +32,17 @@
     raise ValueError(
 ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
 
-[2025-12-03 00:22:10,332] [INFO] Processing audio with duration 07:50.169
-[2025-12-03 00:22:10,379] [ERROR] Error processing Learn chanting with Bhanumathi Narasimhan.webm: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
-[2025-12-03 00:22:10,380] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 00:22:10,381] [INFO] Input: D:\AOL\Learn with Bhanumathi Narasimhan.mp4
-[2025-12-03 00:22:10,381] [INFO] Output: D:\AOL\Learn with Bhanumathi Narasimhan.txt
-[2025-12-03 00:22:10,381] [ERROR] Traceback (most recent call last):
+[2025-12-03 00:47:40,901] [INFO] Processing audio with duration 07:50.169
+[2025-12-03 00:47:40,951] [ERROR] Error processing Learn chanting with Bhanumathi Narasimhan.webm: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
+[2025-12-03 00:47:40,951] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:47:40,951] [INFO] Input: D:\AOL\Learn with Bhanumathi Narasimhan.mp4
+[2025-12-03 00:47:40,951] [ERROR] Traceback (most recent call last):
   File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\workers.py", line 123, in _job
     result = self._transcriber.transcribe_file(
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 145, in transcribe_file
-    beam_size=bs,
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 126, in transcribe_file
-    raise FileNotFoundError(f"Input file not found: {input_path}")
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 150, in transcribe_file
+    raise e
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 131, in transcribe_file
+    segments, info = self._model.transcribe(
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\transcribe.py", line 890, in transcribe
     speech_chunks = get_speech_timestamps(audio, vad_parameters)
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\vad.py", line 89, in get_speech_timestamps
@@ -56,19 +55,20 @@ ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h',
     raise ValueError(
 ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
 
-[2025-12-03 00:22:10,382] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
-[2025-12-03 00:22:11,066] [INFO] Processing audio with duration 09:19.020
-[2025-12-03 00:22:11,118] [ERROR] Error processing Learn with Bhanumathi Narasimhan.mp4: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
-[2025-12-03 00:22:11,118] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 00:22:11,118] [INFO] Input: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.mp3
-[2025-12-03 00:22:11,118] [INFO] Output: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.txt
-[2025-12-03 00:22:11,118] [ERROR] Traceback (most recent call last):
+[2025-12-03 00:47:40,951] [INFO] Output: D:\AOL\Learn with Bhanumathi Narasimhan.txt
+[2025-12-03 00:47:40,969] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
+[2025-12-03 00:47:41,662] [INFO] Processing audio with duration 09:19.020
+[2025-12-03 00:47:41,713] [ERROR] Error processing Learn with Bhanumathi Narasimhan.mp4: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
+[2025-12-03 00:47:41,713] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:47:41,713] [INFO] Input: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.mp3
+[2025-12-03 00:47:41,713] [INFO] Output: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.txt
+[2025-12-03 00:47:41,713] [ERROR] Traceback (most recent call last):
   File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\workers.py", line 123, in _job
     result = self._transcriber.transcribe_file(
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 145, in transcribe_file
-    beam_size=bs,
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 126, in transcribe_file
-    raise FileNotFoundError(f"Input file not found: {input_path}")
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 150, in transcribe_file
+    raise e
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 131, in transcribe_file
+    segments, info = self._model.transcribe(
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\transcribe.py", line 890, in transcribe
     speech_chunks = get_speech_timestamps(audio, vad_parameters)
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\vad.py", line 89, in get_speech_timestamps
@@ -81,16 +81,16 @@ ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h',
     raise ValueError(
 ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
 
-[2025-12-03 00:22:11,118] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
-[2025-12-03 00:22:11,740] [INFO] Processing audio with duration 07:10.704
-[2025-12-03 00:22:11,788] [ERROR] Error processing pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.mp3: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
-[2025-12-03 00:22:11,789] [ERROR] Traceback (most recent call last):
+[2025-12-03 00:47:41,716] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True...
+[2025-12-03 00:47:42,342] [INFO] Processing audio with duration 07:10.704
+[2025-12-03 00:47:42,400] [ERROR] Error processing pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.mp3: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
+[2025-12-03 00:47:42,401] [ERROR] Traceback (most recent call last):
   File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\workers.py", line 123, in _job
     result = self._transcriber.transcribe_file(
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 145, in transcribe_file
-    beam_size=bs,
-  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 126, in transcribe_file
-    raise FileNotFoundError(f"Input file not found: {input_path}")
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 150, in transcribe_file
+    raise e
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\transcriber.py", line 131, in transcribe_file
+    segments, info = self._model.transcribe(
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\transcribe.py", line 890, in transcribe
     speech_chunks = get_speech_timestamps(audio, vad_parameters)
   File "C:\Users\abhis\AppData\Local\Programs\Python\Python310\lib\site-packages\faster_whisper\vad.py", line 89, in get_speech_timestamps
@@ -103,3 +103,55 @@ ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h',
     raise ValueError(
 ValueError: Required inputs (['sr']) are missing from input feed (['input', 'h', 'c']).
 
+[2025-12-03 00:47:50,548] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:47:50,548] [INFO] Input: D:\AOL\Contradictions of the Mind.mp4
+[2025-12-03 00:47:50,548] [INFO] Output: D:\AOL\Contradictions of the Mind.txt
+[2025-12-03 00:47:50,548] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=False...
+[2025-12-03 00:47:53,318] [INFO] Processing audio with duration 40:07.027
+[2025-12-03 00:47:55,453] [INFO] Detected language 'la' with probability 0.48
+[2025-12-03 00:47:55,467] [INFO] Model.transcribe() completed
+[2025-12-03 00:47:55,469] [INFO] Audio duration: 2407.03s
+[2025-12-03 00:47:55,469] [INFO] Processing segments...
+[2025-12-03 00:49:46,205] [INFO] Processed 305 text lines
+[2025-12-03 00:49:46,207] [INFO] Saving to file...
+[2025-12-03 00:49:46,210] [INFO] Saved transcription to D:\AOL\Contradictions of the Mind.txt
+[2025-12-03 00:49:46,210] [INFO] Creating result object...
+[2025-12-03 00:49:46,210] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:49:46,211] [INFO] Input: D:\AOL\Learn chanting with Bhanumathi Narasimhan.webm
+[2025-12-03 00:49:46,211] [INFO] Output: D:\AOL\Learn chanting with Bhanumathi Narasimhan.txt
+[2025-12-03 00:49:46,212] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=False...
+[2025-12-03 00:49:47,571] [INFO] Processing audio with duration 07:50.169
+[2025-12-03 00:49:48,135] [INFO] Detected language 'en' with probability 0.77
+[2025-12-03 00:49:48,149] [INFO] Model.transcribe() completed
+[2025-12-03 00:49:48,150] [INFO] Audio duration: 470.17s
+[2025-12-03 00:49:48,151] [INFO] Processing segments...
+[2025-12-03 00:50:36,262] [INFO] Processed 54 text lines
+[2025-12-03 00:50:36,263] [INFO] Saving to file...
+[2025-12-03 00:50:36,263] [INFO] Saved transcription to D:\AOL\Learn chanting with Bhanumathi Narasimhan.txt
+[2025-12-03 00:50:36,263] [INFO] Creating result object...
+[2025-12-03 00:50:36,263] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:50:36,265] [INFO] Input: D:\AOL\Learn with Bhanumathi Narasimhan.mp4
+[2025-12-03 00:50:36,265] [INFO] Output: D:\AOL\Learn with Bhanumathi Narasimhan.txt
+[2025-12-03 00:50:36,265] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=False...
+[2025-12-03 00:50:37,014] [INFO] Processing audio with duration 09:19.020
+[2025-12-03 00:50:37,647] [INFO] Detected language 'en' with probability 0.75
+[2025-12-03 00:50:37,653] [INFO] Model.transcribe() completed
+[2025-12-03 00:50:37,654] [INFO] Audio duration: 559.02s
+[2025-12-03 00:50:37,654] [INFO] Processing segments...
+[2025-12-03 00:51:46,377] [INFO] Processed 64 text lines
+[2025-12-03 00:51:46,378] [INFO] Saving to file...
+[2025-12-03 00:51:46,380] [INFO] Saved transcription to D:\AOL\Learn with Bhanumathi Narasimhan.txt
+[2025-12-03 00:51:46,382] [INFO] Creating result object...
+[2025-12-03 00:51:46,382] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 00:51:46,382] [INFO] Input: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.mp3
+[2025-12-03 00:51:46,384] [INFO] Output: D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.txt
+[2025-12-03 00:51:46,388] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=False...
+[2025-12-03 00:51:47,212] [INFO] Processing audio with duration 07:10.704
+[2025-12-03 00:51:47,800] [INFO] Detected language 'ta' with probability 0.37
+[2025-12-03 00:51:47,802] [INFO] Model.transcribe() completed
+[2025-12-03 00:51:47,802] [INFO] Audio duration: 430.70s
+[2025-12-03 00:51:47,804] [INFO] Processing segments...
+[2025-12-03 00:54:39,123] [INFO] Processed 10 text lines
+[2025-12-03 00:54:39,123] [INFO] Saving to file...
+[2025-12-03 00:54:39,130] [INFO] Saved transcription to D:\AOL\pazhani-aandavar-bhavani-varukirar-by-melarkode-vaithyanatha-bhagavathar.txt
+[2025-12-03 00:54:39,130] [INFO] Creating result object...
