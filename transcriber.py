@@ -17,6 +17,7 @@ try:
 
     import sys
     import os
+    import time
 
     # Monkey patch VAD model path for offline use
     if getattr(sys, 'frozen', False):
@@ -195,10 +196,25 @@ class Transcriber:
         import tempfile
         import shutil
         import os
+        import wave
 
         if not shutil.which("ffmpeg"):
             LOGGER.warning("ffmpeg not found. Skipping audio repair.")
             return None
+
+        # Optimization: Check if file is already 16kHz mono WAV
+        if input_path.suffix.lower() == ".wav":
+            try:
+                with wave.open(str(input_path), "rb") as wf:
+                    # Check: 1 channel, 16kHz, 16-bit (2 bytes)
+                    if (wf.getnchannels() == 1 and
+                        wf.getframerate() == 16000 and
+                        wf.getsampwidth() == 2):
+                        LOGGER.info("File is already 16kHz mono WAV. Skipping conversion.")
+                        return None
+            except Exception:
+                # If any error reading wav header, proceed to ffmpeg
+                pass
 
         try:
             # Create temp file path
@@ -243,7 +259,7 @@ class Transcriber:
         initial_prompt: Optional[str] = None,
         task: str = "transcribe",
         patience: float = 1.0,
-
+        add_timestamps: bool = True,
     ) -> TranscriptionResult:
         LOGGER.info("=== TRANSCRIBE_FILE CALLED ===")
         LOGGER.info("Input: %s", input_path)
@@ -264,11 +280,13 @@ class Transcriber:
 
         LOGGER.info("Calling model.transcribe() with beam_size=%d, vad_filter=%s, language=%s, prompt=%s...",
                     bs, vad_filter, lang, initial_prompt)
-        # Conservative VAD parameters to prevent cutting text
+
+        start_time = time.time()
+        # Standard Speech VAD parameters (More responsive)
         vad_params = dict(
-            min_silence_duration_ms=5000,
-            speech_pad_ms=2000,
-            threshold=0.25,  # Lower threshold = more sensitive to speech
+            min_silence_duration_ms=1000,
+            speech_pad_ms=500,
+            threshold=0.35,  # Slightly higher threshold for better speech detection
         ) if vad_filter else None
 
         try:
@@ -313,11 +331,16 @@ class Transcriber:
                 return f"{hh:02d}:{mm:02d}:{ss:02d}"
             return f"{mm:02d}:{ss:02d}"
 
+        ai_processed_duration = 0.0
         for segment in segments:
+            ai_processed_duration += (segment.end - segment.start)
             if getattr(segment, "text", "").strip():
-                start_str = format_timestamp(segment.start)
-                end_str = format_timestamp(segment.end)
-                lines.append(f"[{start_str} -> {end_str}] {segment.text.strip()}")
+                if add_timestamps:
+                    start_str = format_timestamp(segment.start)
+                    end_str = format_timestamp(segment.end)
+                    lines.append(f"[{start_str} -> {end_str}] {segment.text.strip()}")
+                else:
+                    lines.append(segment.text.strip())
 
             # Update progress
             if progress_callback and total_duration > 0:
@@ -327,6 +350,45 @@ class Transcriber:
 
         text = "\n".join(lines)
         LOGGER.info("Processed %d text lines", len(lines))
+
+        # --- Generate Transcription Report ---
+        vad_status = "Active" if vad_filter else "Not Active"
+        timestamp_status = "Yes" if add_timestamps else "No"
+
+        # Map beam_size to Word Analysis Depth name
+        depth_name = "Custom"
+        if bs == 5 and self._config.compute_type == "int8":
+            depth_name = "Fast Analysis (int8)"
+        elif bs == 5 and self._config.compute_type == "float32":
+            depth_name = "Precise Analysis (float32)"
+        elif bs == 10:
+            depth_name = "Deep Analysis (float32)"
+
+        vad_removed_duration = max(0.0, total_duration - ai_processed_duration)
+
+        report = [
+            "\n\n" + "="*30,
+            "TRANSCRIPTION REPORT",
+            "="*30,
+            f"Model Used: {self._config.model_name}",
+            f"Word Analysis Depth: {depth_name} (Beam Size: {bs})",
+            f"Smart Silence Removal (VAD): {vad_status}",
+            f"Timestamp Added: {timestamp_status}",
+            f"Language: {lang}",
+            f"Task: {task.capitalize()}",
+            "-"*30,
+            f"Total Audio Duration: {format_timestamp(total_duration)}",
+            f"VAD Removed Duration: {format_timestamp(vad_removed_duration)}",
+            f"AI Processed Duration: {format_timestamp(ai_processed_duration)}",
+            f"Processing Time: {format_timestamp(time.time() - start_time)}",
+            "="*30
+        ]
+
+        report_str = "\n".join(report)
+        text += report_str
+
+        # Log the report so it shows in the GUI
+        LOGGER.info(report_str)
 
 
 

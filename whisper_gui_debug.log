@@ -1,2 +1,11 @@
-[2025-12-03 15:33:00,454] [INFO] Application starting...
-[2025-12-03 15:33:00,883] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium
+[2025-12-03 18:51:05,974] [INFO] Application starting...
+[2025-12-03 18:51:06,345] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium
+[2025-12-03 18:51:20,787] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-medium
+[2025-12-03 18:51:20,792] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-medium
+[2025-12-03 18:51:20,792] [INFO] Device: cpu, Compute type: float32
+[2025-12-03 18:51:23,102] [ERROR] Unhandled exception:
+Traceback (most recent call last):
+  File "d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\gui.py", line 613, in on_start_clicked
+    worker.progress.connect(self.on_progress)
+AttributeError: 'MainWindow' object has no attribute 'on_progress'
+

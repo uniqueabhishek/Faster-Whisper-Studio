@@ -182,12 +182,13 @@ class MainWindow(QMainWindow):
         self.lang_combo: QComboBox
         self.prompt_edit: QLineEdit
 
+        # Settings
+        self.settings = QSettings("FasterWhisperGUI", "App")
+
         self._build_ui()
         self._create_status_bar()
         self._setup_logging()
 
-        # Settings
-        self.settings = QSettings("FasterWhisperGUI", "App")
         self._load_settings()
 
         self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
@@ -261,39 +262,43 @@ class MainWindow(QMainWindow):
 
 
 
+        # Checkboxes Layout (Horizontal)
+        checks_layout = QHBoxLayout()
+
         # VAD Checkbox
-        self.vad_check = QCheckBox("Enable VAD (Skip Silence)")
-        self.vad_check.setToolTip("Uses offline VAD to skip silent parts.\nTurn this OFF if your audio has very low volume speech.")
+        self.vad_check = QCheckBox("Smart Silence Removal")
+        self.vad_check.setToolTip("Automatically detects and skips silent parts to speed up processing.\nTurn it off if your audio has very low volume speech.")
 
         # Check if onnxruntime is working
         try:
             import onnxruntime
-            self.vad_check.setChecked(True)
-            model_layout.addWidget(self.vad_check)
+            self.vad_check.setChecked(False)
         except Exception as e:
             LOGGER.exception("Failed to import onnxruntime")
             self.vad_check.setChecked(False)
             self.vad_check.setEnabled(False)
-            self.vad_check.setText("Enable VAD (Error loading library)")
+            self.vad_check.setText("Smart Silence Removal (Error loading library)")
             self.vad_check.setToolTip(f"VAD requires 'onnxruntime' which failed to load.\nError: {str(e)}\n\nPlease ensure Visual C++ Redistributable is installed.")
-            model_layout.addWidget(self.vad_check)
 
-            # Add Fix Button
-            self.fix_vad_btn = QPushButton("Fix VAD (Install VC++)")
-            self.fix_vad_btn.setToolTip("Click to install the required Visual C++ Redistributable.")
+        checks_layout.addWidget(self.vad_check)
 
-            def _install_vc():
-                vc_path = Path(__file__).parent / "assets" / "vc_redist.x64.exe"
-                if vc_path.exists():
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(vc_path)))
-                else:
-                    QDesktopServices.openUrl(QUrl("https://aka.ms/vs/17/release/vc_redist.x64.exe"))
+        # Timestamp Checkbox
+        self.timestamp_check = QCheckBox("Add Timestamp")
+        self.timestamp_check.setToolTip("Checked: Output includes timestamps [MM:SS -> MM:SS].\nUnchecked: Output contains text only.")
+        self.timestamp_check.setChecked(self.settings.value("add_timestamps", False, type=bool))
+        checks_layout.addWidget(self.timestamp_check)
 
-            self.fix_vad_btn.clicked.connect(_install_vc)
-            model_layout.addWidget(self.fix_vad_btn)
+        checks_layout.addStretch() # Push to left
+        model_layout.addLayout(checks_layout)
 
-            self.fix_vad_btn.clicked.connect(_install_vc)
-            model_layout.addWidget(self.fix_vad_btn)
+
+
+
+
+
+
+
+
 
         # Language Selection
         lang_layout = QHBoxLayout()
@@ -582,6 +587,10 @@ class MainWindow(QMainWindow):
 
 
 
+        # Get Timestamp Setting
+        add_timestamps = self.timestamp_check.isChecked()
+        self.settings.setValue("add_timestamps", add_timestamps)
+
         # Save settings
         self.settings.setValue("language", lang_name)
         self.settings.setValue("initial_prompt", self.prompt_edit.text())
@@ -597,45 +606,14 @@ class MainWindow(QMainWindow):
             initial_prompt=initial_prompt,
             task=task,
             patience=patience,
-
+            add_timestamps=add_timestamps,
         )
         self._worker = worker
 
         worker.progress.connect(self.on_progress)
-        worker.speed.connect(self.on_speed_update)
+        # worker.speed.connect(self.on_speed_update) # Removed
         worker.file_status.connect(self.on_file_status_update)
         worker.finished.connect(self.on_finished)
-        worker.failed.connect(self.on_failed)
-        worker.start()
-
-    def on_file_status_update(self, filename: str, status: str) -> None:
-        self.file_status_list.addItem(f"{filename} → {status}")
-        self.file_status_list.scrollToBottom()
-
-    def on_progress(self, percent: int) -> None:
-        self.progress_bar.setValue(percent)
-
-    def on_speed_update(self, avg_time: float, eta_seconds: int) -> None:
-        minutes, seconds = divmod(eta_seconds, 60)
-        eta_txt = (
-            f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
-        )
-        self.progress_bar.setFormat(
-            f"%p%   •   {avg_time:.2f}s/file   •   ETA {eta_txt}"
-        )
-
-    def on_finished(self, results: List[TranscriptionResult]) -> None:
-        self.statusBar().showMessage(f"Completed. Files: {len(results)}")
-        self._worker = None
-        self._set_busy(False)
-        self.progress_bar.setValue(100)
-        QMessageBox.information(self, "Done", f"Successfully processed {len(results)} files.")
-
-    def on_failed(self, message: str) -> None:
-        self.show_error(message)
-        self.statusBar().showMessage("Failed.")
-        self._worker = None
-        self._set_busy(False)
 
     def on_cancel_clicked(self) -> None:
         if self._worker:
