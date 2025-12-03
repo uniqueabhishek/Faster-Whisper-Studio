@@ -46,8 +46,7 @@ MEDIA_FILTER = (
     "Media Files (*.mp3 *.wav *.m4a *.flac *.ogg *.mp4 *.mkv *.webm);;"
     "All Files (*)"
 )
-DEFAULT_WIDTH = 1200
-DEFAULT_WIDTH = 1000
+DEFAULT_WIDTH = 1300
 DEFAULT_HEIGHT = 800
 APP_VERSION = "v1.0.0"
 
@@ -194,6 +193,15 @@ class MainWindow(QMainWindow):
         self._load_settings()
 
         self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        self._center_window()
+
+    def _center_window(self) -> None:
+        """Centers the window on the screen."""
+        frame_gm = self.frameGeometry()
+        screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
+        center_point = QApplication.desktop().screenGeometry(screen).center()
+        frame_gm.moveCenter(center_point)
+        self.move(frame_gm.topLeft())
 
     def _setup_logging(self) -> None:
         """Redirect logging to the GUI text area."""
@@ -363,6 +371,30 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(clear_btn)
 
         queue_layout.addLayout(btn_row)
+
+        # Output Folder Selection
+        # Output Folder Selection
+        output_layout = QHBoxLayout()
+
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setPlaceholderText("Default: Same as Input")
+        self.output_dir_edit.setReadOnly(True)
+
+        self.output_btn = QPushButton("Destination")
+        self.output_btn.setToolTip("Select custom output folder")
+        self.output_btn.setObjectName("SecondaryBtn")
+        self.output_btn.clicked.connect(self.on_select_output_clicked)
+
+        self.open_btn = QPushButton("Open")
+        self.open_btn.setToolTip("Open output folder")
+        self.open_btn.setObjectName("SecondaryBtn")
+        self.open_btn.clicked.connect(self.on_open_output_clicked)
+
+        output_layout.addWidget(self.output_dir_edit)
+        output_layout.addWidget(self.output_btn)
+        output_layout.addWidget(self.open_btn)
+
+        queue_layout.addLayout(output_layout)
         left_layout.addWidget(queue_group)
 
         # Spacer
@@ -448,6 +480,11 @@ class MainWindow(QMainWindow):
         last_prompt = self.settings.value("initial_prompt", "")
         self.prompt_edit.setText(last_prompt)
 
+        # Load Output Dir
+        last_output = self.settings.value("last_output_dir", "")
+        if last_output and Path(last_output).exists():
+            self.output_dir_edit.setText(last_output)
+
     # ---------------------------------------------------------
     # EVENTS
     # ---------------------------------------------------------
@@ -467,6 +504,25 @@ class MainWindow(QMainWindow):
             if paths:
                 first_file = Path(paths[0])
                 self.settings.setValue("last_input_dir", str(first_file.parent))
+
+    def on_select_output_clicked(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", self.settings.value("last_output_dir", "")
+        )
+        if path:
+            self.output_dir_edit.setText(path)
+            self.settings.setValue("last_output_dir", path)
+
+    def on_open_output_clicked(self) -> None:
+        path = self.output_dir_edit.text().strip()
+        if not path:
+            # If empty, try to open the input directory (default)
+            path = self.settings.value("last_input_dir", "")
+
+        if path and Path(path).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        else:
+            self.statusBar().showMessage("Output folder not found.")
 
 
 
@@ -599,7 +655,9 @@ class MainWindow(QMainWindow):
         # Get Task
         task = self.task_combo.currentText().lower()  # "transcribe" or "translate"
 
-
+        # Get Output Dir
+        output_dir_str = self.output_dir_edit.text().strip()
+        output_dir = Path(output_dir_str) if output_dir_str else None
 
         # Get Timestamp Setting
         add_timestamps = self.timestamp_check.isChecked()
@@ -613,7 +671,7 @@ class MainWindow(QMainWindow):
         worker = BatchWorker(
             self._transcriber,
             input_files,
-            None,  # output_dir (None = same as input)
+            output_dir,  # output_dir (None = same as input)
             beam_size=beam_size,
             vad_filter=vad_filter,
             language=language,
@@ -643,6 +701,7 @@ class MainWindow(QMainWindow):
         self._worker = None
         self._set_busy(False)
         self.progress_bar.setValue(100)
+        self.file_list.clear()  # Auto-clear queue
         QMessageBox.information(self, "Done", f"Successfully processed {len(results)} files.")
 
     def on_failed(self, message: str) -> None:
