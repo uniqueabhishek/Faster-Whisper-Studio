@@ -1,20 +1,21 @@
-[2025-12-03 05:29:15,739] [INFO] Application starting...
-[2025-12-03 05:29:16,075] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
-[2025-12-03 05:29:53,968] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
-[2025-12-03 05:29:53,970] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
-[2025-12-03 05:29:53,970] [INFO] Device: cpu, Compute type: int8
-[2025-12-03 05:29:56,774] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 05:29:56,774] [INFO] Input: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict-2.mp3
-[2025-12-03 05:29:56,775] [INFO] Output: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict-2.txt
-[2025-12-03 05:29:56,775] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True, language=en, prompt=None...
-[2025-12-03 05:29:58,065] [INFO] Processing audio with duration 14:43.304
-[2025-12-03 05:29:58,066] [INFO] Instantiating local VAD model from: d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\assets\silero_vad.onnx
-[2025-12-03 05:29:58,110] [INFO] VAD Model inputs: ['input', 'sr', 'h', 'c']
-[2025-12-03 05:30:00,773] [INFO] VAD filter removed 12:29.512 of audio
-[2025-12-03 05:30:00,860] [INFO] Model.transcribe() completed
-[2025-12-03 05:30:00,860] [INFO] Audio duration: 883.30s
-[2025-12-03 05:30:00,860] [INFO] Processing segments...
-[2025-12-03 05:31:52,703] [INFO] Processed 29 text lines
-[2025-12-03 05:31:52,704] [INFO] Saving to file...
-[2025-12-03 05:31:52,705] [INFO] Saved transcription to D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict-2.txt
-[2025-12-03 05:31:52,706] [INFO] Creating result object...
+[2025-12-03 05:45:58,275] [INFO] Application starting...
+[2025-12-03 05:45:58,563] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
+[2025-12-03 05:46:11,242] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 05:46:20,620] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 05:46:20,621] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 05:46:20,622] [INFO] Device: cpu, Compute type: int8
+[2025-12-03 05:46:20,931] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 05:46:20,933] [INFO] Input: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.mp3
+[2025-12-03 05:46:20,933] [INFO] Output: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
+[2025-12-03 05:46:20,933] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True, language=en, prompt=None...
+[2025-12-03 05:46:22,324] [INFO] Processing audio with duration 16:13.479
+[2025-12-03 05:46:22,325] [INFO] Instantiating local VAD model from: d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\assets\silero_vad.onnx
+[2025-12-03 05:46:22,366] [INFO] VAD Model inputs: ['input', 'sr', 'h', 'c']
+[2025-12-03 05:46:25,005] [INFO] VAD filter removed 15:17.479 of audio
+[2025-12-03 05:46:25,044] [INFO] Model.transcribe() completed
+[2025-12-03 05:46:25,045] [INFO] Audio duration: 973.48s
+[2025-12-03 05:46:25,045] [INFO] Processing segments...
+[2025-12-03 05:46:27,684] [INFO] Processed 12 text lines
+[2025-12-03 05:46:27,685] [INFO] Saving to file...
+[2025-12-03 05:46:27,686] [INFO] Saved transcription to D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
+[2025-12-03 05:46:27,687] [INFO] Creating result object...

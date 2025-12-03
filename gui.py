@@ -549,11 +549,7 @@ class MainWindow(QMainWindow):
         self.file_status_list.addItem(f"{filename} → {status}")
         self.file_status_list.scrollToBottom()
 
-    def on_progress(self, processed: int, total: int) -> None:
-        # This is batch progress (files processed / total files)
-        # If we want per-file progress, we need to wire that up differently.
-        # But BatchWorker emits (processed_count, total_count).
-        percent = int(processed * 100 / total) if total > 0 else 0
+    def on_progress(self, percent: int) -> None:
         self.progress_bar.setValue(percent)
 
     def on_speed_update(self, avg_time: float, eta_seconds: int) -> None:

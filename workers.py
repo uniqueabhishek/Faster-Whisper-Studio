@@ -68,7 +68,7 @@ class SingleFileWorker(QThread):
 
 
 class BatchWorker(QThread):
-    progress = pyqtSignal(int, int)           # processed, total
+    progress = pyqtSignal(int)                # overall_percent (0-100)
     speed = pyqtSignal(float, int)            # avg_time, eta_seconds
     file_status = pyqtSignal(str, str)        # filename, status
     finished = pyqtSignal(object)             # list of TranscriptionResult
@@ -105,8 +105,6 @@ class BatchWorker(QThread):
             self.finished.emit([])
             return
 
-
-
         results: List[TranscriptionResult] = []
         start_time = time.time()
         processed = 0
@@ -117,6 +115,16 @@ class BatchWorker(QThread):
                 return None
 
             self.file_status.emit(path.name, "Processing")
+
+            def _on_file_progress(file_percent: int):
+                # Calculate overall progress
+                # processed: number of fully completed files
+                # file_percent: percentage of current file
+                # total: total number of files
+                if total > 0:
+                    overall = int((processed * 100 + file_percent) / total)
+                    self.progress.emit(overall)
+
             try:
                 with self._model_lock:
                     out_path = (
@@ -127,6 +135,7 @@ class BatchWorker(QThread):
                     result = self._transcriber.transcribe_file(
                         path,
                         output_path=out_path,
+                        progress_callback=_on_file_progress,
                         beam_size=self._beam_size,
                         vad_filter=self._vad_filter,
                         language=self._language,
@@ -163,7 +172,11 @@ class BatchWorker(QThread):
                 avg_time = elapsed / processed
                 eta = int((total - processed) * avg_time)
 
-                self.progress.emit(processed, total)
+                # Emit 100% for this file (or base for next)
+                if total > 0:
+                    overall = int((processed * 100) / total)
+                    self.progress.emit(overall)
+
                 self.speed.emit(avg_time, eta)
 
         except Exception as exc:
