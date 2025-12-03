@@ -86,6 +86,7 @@ class BatchWorker(QThread):
         task: str = "transcribe",
         patience: float = 1.0,
         add_timestamps: bool = True,
+        add_report: bool = True,
     ) -> None:
         super().__init__()
         self._transcriber = transcriber
@@ -98,9 +99,9 @@ class BatchWorker(QThread):
         self._task = task
         self._patience = patience
         self._add_timestamps = add_timestamps
+        self.add_report = add_report
         self._cancel = False
         self._model_lock = threading.Lock()
-
     def request_cancel(self) -> None:
         self._cancel = True
 
@@ -124,9 +125,6 @@ class BatchWorker(QThread):
 
             def _on_file_progress(file_percent: int):
                 # Calculate overall progress
-                # processed: number of fully completed files
-                # file_percent: percentage of current file
-                # total: total number of files
                 if total > 0:
                     overall = int((processed * 100 + file_percent) / total)
                     self.progress.emit(overall)
@@ -149,6 +147,7 @@ class BatchWorker(QThread):
                         task=self._task,
                         patience=self._patience,
                         add_timestamps=self._add_timestamps,
+                        add_report=self.add_report,
                     )
                 return result
             except Exception as e:
@@ -176,14 +175,10 @@ class BatchWorker(QThread):
                 else:
                     self.file_status.emit(media_path.name, "Failed")
 
-
-
                 # Emit 100% for this file (or base for next)
                 if total > 0:
                     overall = int((processed * 100) / total)
                     self.progress.emit(overall)
-
-
 
         except Exception as exc:
             self.failed.emit(str(exc))

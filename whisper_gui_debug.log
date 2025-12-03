@@ -1,0 +1,38 @@
+[2025-12-03 22:14:22,084] [INFO] Application starting...
+[2025-12-03 22:14:22,446] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium
+[2025-12-03 22:14:28,261] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
+[2025-12-03 22:14:47,008] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
+[2025-12-03 22:14:47,009] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
+[2025-12-03 22:14:47,010] [INFO] Device: cpu, Compute type: float32
+[2025-12-03 22:14:49,168] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 22:14:49,168] [INFO] Input: D:\AOL\Mp3 Discourses\SSEEKER\007 Fire Eng.mp3
+[2025-12-03 22:14:49,168] [INFO] Output: D:\D Desktop\Gurudev AI Files\007 Fire Eng.txt
+[2025-12-03 22:14:49,182] [INFO] Repairing audio with ffmpeg: D:\AOL\Mp3 Discourses\SSEEKER\007 Fire Eng.mp3 -> C:\Users\abhis\AppData\Local\Temp\tmpdcslx051.wav
+[2025-12-03 22:14:49,405] [INFO] Audio repair successful.
+[2025-12-03 22:14:49,405] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=False, language=en, prompt=None...
+[2025-12-03 22:14:49,473] [INFO] Processing audio with duration 01:58.230
+[2025-12-03 22:14:49,565] [INFO] Model.transcribe() completed
+[2025-12-03 22:14:49,565] [INFO] Audio duration: 118.23s
+[2025-12-03 22:14:49,565] [INFO] Processing segments...
+[2025-12-03 22:16:16,775] [INFO] Processed 23 text lines
+[2025-12-03 22:16:16,776] [INFO] 
+
+==============================
+TRANSCRIPTION REPORT
+==============================
+Model Used: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
+Word Analysis Depth: Precise Analysis (float32) (Beam Size: 5)
+Smart Silence Removal (VAD): Not Active
+Timestamp Added: No
+Language: en
+Task: Transcribe
+------------------------------
+Total Audio Duration: 01:58
+VAD Removed Duration: 00:00
+AI Processed Duration: 01:57
+Processing Time: 01:27
+==============================
+[2025-12-03 22:16:16,777] [INFO] Removing temp file: C:\Users\abhis\AppData\Local\Temp\tmpdcslx051.wav
+[2025-12-03 22:16:16,782] [INFO] Saving to file...
+[2025-12-03 22:16:16,783] [INFO] Saved transcription to D:\D Desktop\Gurudev AI Files\007 Fire Eng.txt
+[2025-12-03 22:16:16,784] [INFO] Creating result object...

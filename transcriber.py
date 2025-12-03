@@ -260,6 +260,7 @@ class Transcriber:
         task: str = "transcribe",
         patience: float = 1.0,
         add_timestamps: bool = True,
+        add_report: bool = True,
     ) -> TranscriptionResult:
         LOGGER.info("=== TRANSCRIBE_FILE CALLED ===")
         LOGGER.info("Input: %s", input_path)
@@ -271,9 +272,6 @@ class Transcriber:
         # Try to repair/convert audio first
         temp_wav = self._convert_to_wav(input_path)
         actual_input = temp_wav if temp_wav else input_path
-
-        if temp_wav:
-            LOGGER.info("Using repaired file for transcription: %s", temp_wav)
 
         bs = beam_size if beam_size is not None else self._config.beam_size
         lang = language if language else self._config.language
@@ -385,7 +383,9 @@ class Transcriber:
         ]
 
         report_str = "\n".join(report)
-        text += report_str
+
+        if add_report:
+            text += report_str
 
         # Log the report so it shows in the GUI
         LOGGER.info(report_str)

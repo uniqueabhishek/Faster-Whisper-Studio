@@ -298,10 +298,14 @@ class MainWindow(QMainWindow):
         self.timestamp_check.setChecked(self.settings.value("add_timestamps", False, type=bool))
         checks_layout.addWidget(self.timestamp_check)
 
+        # Report Checkbox
+        self.report_check = QCheckBox("Add Report Details")
+        self.report_check.setToolTip("Append model/time stats to the output file.")
+        self.report_check.setChecked(False)
+        checks_layout.addWidget(self.report_check)
+
         checks_layout.addStretch() # Push to left
         model_layout.addLayout(checks_layout)
-
-
 
 
 
@@ -663,6 +667,9 @@ class MainWindow(QMainWindow):
         add_timestamps = self.timestamp_check.isChecked()
         self.settings.setValue("add_timestamps", add_timestamps)
 
+        # Get Report Setting
+        add_report = self.report_check.isChecked()
+
         # Save settings
         self.settings.setValue("language", lang_name)
         self.settings.setValue("initial_prompt", self.prompt_edit.text())
@@ -679,6 +686,7 @@ class MainWindow(QMainWindow):
             task=task,
             patience=patience,
             add_timestamps=add_timestamps,
+            add_report=add_report,
         )
         self._worker = worker
 
