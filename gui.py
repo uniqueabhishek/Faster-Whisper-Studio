@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(15)
 
         # Header
-        header = QLabel("Faster Whisper GUI")
+        header = QLabel("Faster-Whisper AI GUI")
         header.setObjectName("Header")
         left_layout.addWidget(header)
 
