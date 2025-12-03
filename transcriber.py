@@ -284,9 +284,9 @@ class Transcriber:
         start_time = time.time()
         # Standard Speech VAD parameters (More responsive)
         vad_params = dict(
-            min_silence_duration_ms=1000,
-            speech_pad_ms=500,
-            threshold=0.35,  # Slightly higher threshold for better speech detection
+            min_silence_duration_ms=3000,
+            speech_pad_ms=1000,
+            threshold=0.1,
         ) if vad_filter else None
 
         try:
@@ -364,7 +364,7 @@ class Transcriber:
         elif bs == 10:
             depth_name = "Deep Analysis (float32)"
 
-        vad_removed_duration = max(0.0, total_duration - ai_processed_duration)
+        vad_removed_duration = max(0.0, total_duration - ai_processed_duration) if vad_filter else 0.0
 
         report = [
             "\n\n" + "="*30,
