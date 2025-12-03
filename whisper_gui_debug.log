@@ -1,21 +1,25 @@
-[2025-12-03 05:45:58,275] [INFO] Application starting...
-[2025-12-03 05:45:58,563] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-medium.en
-[2025-12-03 05:46:11,242] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
-[2025-12-03 05:46:20,620] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
-[2025-12-03 05:46:20,621] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
-[2025-12-03 05:46:20,622] [INFO] Device: cpu, Compute type: int8
-[2025-12-03 05:46:20,931] [INFO] === TRANSCRIBE_FILE CALLED ===
-[2025-12-03 05:46:20,933] [INFO] Input: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.mp3
-[2025-12-03 05:46:20,933] [INFO] Output: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
-[2025-12-03 05:46:20,933] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True, language=en, prompt=None...
-[2025-12-03 05:46:22,324] [INFO] Processing audio with duration 16:13.479
-[2025-12-03 05:46:22,325] [INFO] Instantiating local VAD model from: d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\assets\silero_vad.onnx
-[2025-12-03 05:46:22,366] [INFO] VAD Model inputs: ['input', 'sr', 'h', 'c']
-[2025-12-03 05:46:25,005] [INFO] VAD filter removed 15:17.479 of audio
-[2025-12-03 05:46:25,044] [INFO] Model.transcribe() completed
-[2025-12-03 05:46:25,045] [INFO] Audio duration: 973.48s
-[2025-12-03 05:46:25,045] [INFO] Processing segments...
-[2025-12-03 05:46:27,684] [INFO] Processed 12 text lines
-[2025-12-03 05:46:27,685] [INFO] Saving to file...
-[2025-12-03 05:46:27,686] [INFO] Saved transcription to D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
-[2025-12-03 05:46:27,687] [INFO] Creating result object...
+[2025-12-03 06:51:52,165] [INFO] Application starting...
+[2025-12-03 06:51:52,460] [INFO] Restored model path: D:\D Desktop\WhisperModel\model\faster-whisper-small.en
+[2025-12-03 06:51:57,519] [INFO] Model directory selected: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 06:52:10,136] [INFO] Model path used: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 06:52:10,137] [INFO] Loading local offline model: D:\D Desktop\WhisperModel\model\faster-whisper-tiny.en
+[2025-12-03 06:52:10,137] [INFO] Device: cpu, Compute type: int8
+[2025-12-03 06:52:10,381] [INFO] === TRANSCRIBE_FILE CALLED ===
+[2025-12-03 06:52:10,382] [INFO] Input: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.mp3
+[2025-12-03 06:52:10,382] [INFO] Output: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
+[2025-12-03 06:52:10,394] [INFO] Repairing audio with ffmpeg: D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.mp3 -> C:\Users\abhis\AppData\Local\Temp\tmpoywqz8ex.wav
+[2025-12-03 06:52:13,464] [INFO] Audio repair successful.
+[2025-12-03 06:52:13,464] [INFO] Using repaired file for transcription: C:\Users\abhis\AppData\Local\Temp\tmpoywqz8ex.wav
+[2025-12-03 06:52:13,464] [INFO] Calling model.transcribe() with beam_size=5, vad_filter=True, language=None, prompt=None...
+[2025-12-03 06:52:14,088] [INFO] Processing audio with duration 46:07.256
+[2025-12-03 06:52:14,088] [INFO] Instantiating local VAD model from: d:\D Desktop\my chatgpt faster whisper gui app\Faster-Whisper_GUI_APP\assets\silero_vad.onnx
+[2025-12-03 06:52:14,131] [INFO] VAD Model inputs: ['input', 'sr', 'h', 'c']
+[2025-12-03 06:52:22,067] [INFO] VAD filter removed 05:13.464 of audio
+[2025-12-03 06:52:23,941] [INFO] Model.transcribe() completed
+[2025-12-03 06:52:23,942] [INFO] Audio duration: 2767.26s
+[2025-12-03 06:52:23,943] [INFO] Processing segments...
+[2025-12-03 06:53:18,411] [INFO] Processed 320 text lines
+[2025-12-03 06:53:18,412] [INFO] Removing temp file: C:\Users\abhis\AppData\Local\Temp\tmpoywqz8ex.wav
+[2025-12-03 06:53:18,423] [INFO] Saving to file...
+[2025-12-03 06:53:18,425] [INFO] Saved transcription to D:\AOL\Mp3 Discourses\The Power of Love in Times of Conflict - 4.txt
+[2025-12-03 06:53:18,425] [INFO] Creating result object...

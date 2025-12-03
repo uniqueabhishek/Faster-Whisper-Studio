@@ -45,3 +45,21 @@ Lower CPU and RAM usage. The VAD model is tiny and runs in milliseconds, saving 
 
 ### 4. 🎯 Studio-Grade Accuracy
 With our custom tuning (padding and thresholds), the system now captures the subtle starts and ends of sentences that standard "out-of-the-box" VAD implementations often chop off.
+
+---
+
+## Meditation Mode Tuning
+To handle audio with long pauses (like meditation), we adjusted the parameters:
+- **Min Silence**: `5000ms` (5s) - The system waits for 5 full seconds of silence before deciding to cut.
+- **Padding**: `2000ms` (2s) - It adds 2 seconds of "buffer" audio around every speech segment.
+
+### Example: How it handles 10s Silence
+If there is a **10-second silence** between two sentences:
+1.  **Total Silence**: 10 seconds.
+2.  **Padding Kept**:
+    -   **2s** kept after the first sentence (to catch soft endings).
+    -   **2s** kept before the second sentence (to catch breath/start).
+    -   **Total Kept**: 4 seconds.
+3.  **Total Cut**: 10s - 4s = **6 seconds** removed.
+
+This ensures the transcription is faster (skipping 6s of dead air) while preserving the natural flow and preventing any soft speech from being lost.

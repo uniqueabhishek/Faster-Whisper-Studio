@@ -47,28 +47,44 @@ try:
                 if 'sr' in self._inputs and 'sr' not in input_feed:
                     input_feed['sr'] = np.array([16000], dtype=np.int64)
 
-                # 2. Prepare h/c with correct shape (2, batch_size, 64)
-                # We use zeros because faster_whisper uses context-based batching
-                # and likely expects stateless processing for these chunks.
-                if 'h' in self._inputs:
-                    input_feed['h'] = np.zeros((2, batch_size, 64), dtype=np.float32)
-                if 'c' in self._inputs:
-                    input_feed['c'] = np.zeros((2, batch_size, 64), dtype=np.float32)
+                # 2. Prepare h/c
+                # faster_whisper passes state as (1, batch, 128) or similar "old style" shape.
+                # We need to reshape it to (2, batch, 64) for VAD v4.
+                for key in ['h', 'c']:
+                    if key in self._inputs:
+                        if key in input_feed:
+                            val = input_feed[key]
+                            # If it comes in as (1, batch, 128), reshape to (2, batch, 64)
+                            # BUT only if the total size matches!
+                            required_size = 2 * batch_size * 64
+                            if val.ndim == 3 and val.shape[0] == 1 and val.shape[2] == 128 and val.size == required_size:
+                                input_feed[key] = val.reshape(2, batch_size, 64)
+                            elif val.shape != (2, batch_size, 64):
+                                # Fallback if shape is weird or size mismatch: reset to zeros
+                                input_feed[key] = np.zeros((2, batch_size, 64), dtype=np.float32)
+                        else:
+                            # Not in input feed, initialize zeros
+                            input_feed[key] = np.zeros((2, batch_size, 64), dtype=np.float32)
 
                 # 3. Run session
                 outputs = self._session.run(output_names, input_feed, run_options)
 
-                # 4. Return dummy state to satisfy faster_whisper loop
-                # It expects (1, 1, 128) to pass to the next iteration (which we will ignore/reset anyway)
+                # 4. Reshape outputs back to (1, batch, 128) to satisfy faster_whisper
+                # outputs is usually [prob, h, c]
                 if len(outputs) == 3:
-                    prob, _, _ = outputs
-                    dummy_state = np.zeros((1, 1, 128), dtype=np.float32)
-                    return [prob, dummy_state, dummy_state]
+                    prob, h_out, c_out = outputs
+
+                    # Reshape h_out (2, B, 64) -> (1, B, 128)
+                    if h_out.shape == (2, batch_size, 64):
+                        h_out = h_out.reshape(1, batch_size, 128)
+
+                    # Reshape c_out (2, B, 64) -> (1, B, 128)
+                    if c_out.shape == (2, batch_size, 64):
+                        c_out = c_out.reshape(1, batch_size, 128)
+
+                    return [prob, h_out, c_out]
 
                 return outputs
-
-            def get_inputs(self):
-                return self._session.get_inputs()
 
             def get_outputs(self):
                 return self._session.get_outputs()
@@ -173,6 +189,49 @@ class Transcriber:
             LOGGER.error("Failed to load model: %s", str(e))
             raise
 
+    def _convert_to_wav(self, input_path: Path) -> Optional[Path]:
+        """Converts input to 16kHz mono WAV using ffmpeg to fix duration issues."""
+        import subprocess
+        import tempfile
+        import shutil
+        import os
+
+        if not shutil.which("ffmpeg"):
+            LOGGER.warning("ffmpeg not found. Skipping audio repair.")
+            return None
+
+        try:
+            # Create temp file path
+            fd, temp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            temp_path = Path(temp_path)
+
+            LOGGER.info("Repairing audio with ffmpeg: %s -> %s", input_path, temp_path)
+
+            # ffmpeg -i input -ar 16000 -ac 1 -c:a pcm_s16le output.wav
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(input_path),
+                "-ar", "16000",
+                "-ac", "1",
+                "-c:a", "pcm_s16le",
+                str(temp_path)
+            ]
+
+            # Run ffmpeg (suppress output unless error)
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            if temp_path.exists() and temp_path.stat().st_size > 0:
+                LOGGER.info("Audio repair successful.")
+                return temp_path
+            else:
+                LOGGER.error("ffmpeg produced empty file.")
+                return None
+
+        except Exception as e:
+            LOGGER.error("Audio repair failed: %s", str(e))
+            return None
+
     def transcribe_file(
         self,
         input_path: Path,
@@ -190,6 +249,13 @@ class Transcriber:
         if not input_path.is_file():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
+        # Try to repair/convert audio first
+        temp_wav = self._convert_to_wav(input_path)
+        actual_input = temp_wav if temp_wav else input_path
+
+        if temp_wav:
+            LOGGER.info("Using repaired file for transcription: %s", temp_wav)
+
         bs = beam_size if beam_size is not None else self._config.beam_size
         lang = language if language else self._config.language
 
@@ -197,27 +263,28 @@ class Transcriber:
                     bs, vad_filter, lang, initial_prompt)
         # Conservative VAD parameters to prevent cutting text
         vad_params = dict(
-            min_silence_duration_ms=1000,
-            speech_pad_ms=400,
-            threshold=0.35,  # Lower threshold = more sensitive to speech
+            min_silence_duration_ms=5000,
+            speech_pad_ms=2000,
+            threshold=0.25,  # Lower threshold = more sensitive to speech
         ) if vad_filter else None
 
         try:
             segments, info = self._model.transcribe(
-                str(input_path),
+                str(actual_input),
                 language=lang,
                 beam_size=bs,
                 best_of=self._config.best_of,
                 vad_filter=vad_filter,
                 vad_parameters=vad_params,
                 initial_prompt=initial_prompt,
+                condition_on_previous_text=False,
             )
         except Exception as e:
             # Fallback for VAD errors (e.g. invalid model file or missing dependencies)
             if vad_filter and ("ONNXRuntimeError" in str(e) or "INVALID_PROTOBUF" in str(e)):
                 LOGGER.warning(f"VAD failed to load ({e}). Retrying with VAD disabled.")
                 segments, info = self._model.transcribe(
-                    str(input_path),
+                    str(actual_input),
                     language=lang,
                     beam_size=bs,
                     best_of=self._config.best_of,
@@ -234,9 +301,18 @@ class Transcriber:
         LOGGER.info("Processing segments...")
         lines: List[str] = []
 
+        def format_timestamp(seconds: float) -> str:
+            mm, ss = divmod(int(seconds), 60)
+            hh, mm = divmod(mm, 60)
+            if hh > 0:
+                return f"{hh:02d}:{mm:02d}:{ss:02d}"
+            return f"{mm:02d}:{ss:02d}"
+
         for segment in segments:
             if getattr(segment, "text", "").strip():
-                lines.append(segment.text.strip())
+                start_str = format_timestamp(segment.start)
+                end_str = format_timestamp(segment.end)
+                lines.append(f"[{start_str} -> {end_str}] {segment.text.strip()}")
 
             # Update progress
             if progress_callback and total_duration > 0:
@@ -246,6 +322,14 @@ class Transcriber:
 
         text = "\n".join(lines)
         LOGGER.info("Processed %d text lines", len(lines))
+
+        # Cleanup temp file
+        if temp_wav and temp_wav.exists():
+            try:
+                LOGGER.info("Removing temp file: %s", temp_wav)
+                os.unlink(temp_wav)
+            except Exception as e:
+                LOGGER.warning("Failed to remove temp file: %s", e)
 
         resolved_output: Optional[Path] = None
         if output_path is not None:
