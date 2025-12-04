@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+whisper_gui_debug.log
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Environment variables
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db
