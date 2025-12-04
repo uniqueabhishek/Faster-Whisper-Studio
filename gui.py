@@ -29,7 +29,8 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QGroupBox,
     QFrame,
-    QAbstractItemView
+    QAbstractItemView,
+    QListWidgetItem
 )
 
 from transcriber import (
