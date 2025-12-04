@@ -190,9 +190,10 @@ class Transcriber:
             LOGGER.error("Failed to load model: %s", str(e))
             raise
 
-    def prepare_audio(self, input_path: Path) -> Optional[Path]:
+    def prepare_audio(self, input_path: Path, cancel_check=None) -> Optional[Path]:
         """Converts input to 16kHz mono WAV using ffmpeg to fix duration issues.
            Returns Path to temp file if converted, or None if original is fine.
+           cancel_check: Optional callable that returns True if cancellation is requested.
         """
         import subprocess
         import tempfile
@@ -230,23 +231,48 @@ class Transcriber:
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(input_path),
-                "-ar", "16000",
                 "-ac", "1",
                 "-c:a", "pcm_s16le",
                 str(temp_path)
             ]
 
-            # Run ffmpeg (suppress output unless error)
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Use Popen to allow cancellation
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
 
-            if temp_path.exists() and temp_path.stat().st_size > 0:
-                LOGGER.info("Audio repair successful.")
-                return temp_path
-            else:
-                LOGGER.error("ffmpeg produced empty file.")
+            while True:
+                if cancel_check and cancel_check():
+                    process.kill()
+                    LOGGER.info("Audio preparation cancelled.")
+                    # Cleanup partial file
+                    if temp_path.exists():
+                        try:
+                            os.unlink(temp_path)
+                        except:
+                            pass
+                    raise Exception("Cancelled")
+
+                if process.poll() is not None:
+                    break
+
+                import time
+                time.sleep(0.1)
+
+            if process.returncode != 0:
+                stderr = process.stderr.read().decode()
+                LOGGER.warning("ffmpeg failed: %s", stderr)
                 return None
 
+            LOGGER.info("Audio repair successful.")
+            return temp_path
+
         except Exception as e:
+            if str(e) == "Cancelled":
+                raise
             LOGGER.error("Audio repair failed: %s", str(e))
             return None
 
