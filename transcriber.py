@@ -291,7 +291,7 @@ class Transcriber:
         add_report: bool = True,
         pre_converted_path: Optional[Path] = None,
     ) -> TranscriptionResult:
-        LOGGER.info("=== TRANSCRIBE_FILE CALLED ===")
+        LOGGER.info("\n\n=== TRANSCRIBE_FILE CALLED ===")
         LOGGER.info("Input: %s", input_path)
         LOGGER.info("Output: %s", output_path)
 

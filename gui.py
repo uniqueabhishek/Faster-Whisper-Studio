@@ -49,7 +49,7 @@ MEDIA_FILTER = (
 )
 DEFAULT_WIDTH = 1300
 DEFAULT_HEIGHT = 800
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v1.1.3"
 
 LANGUAGE_MAP = {
     "Auto Detect": "Auto",
