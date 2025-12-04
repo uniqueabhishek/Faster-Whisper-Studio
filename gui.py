@@ -29,8 +29,7 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QGroupBox,
     QFrame,
-    QAbstractItemView,
-    QListWidgetItem
+    QAbstractItemView
 )
 
 from transcriber import (
@@ -252,12 +251,12 @@ class MainWindow(QMainWindow):
 
         # Compute Type (Precision)
         compute_layout = QHBoxLayout()
-        compute_label = QLabel("Word Analysis Depth:")
+        compute_label = QLabel("Transcription Accuracy:")
         self.compute_combo = QComboBox()
         self.compute_combo.addItems([
-            "Fast Analysis (int8)",
-            "Precise Analysis (float32)",
-            "Deep Analysis (float32)"
+            "Standard (Fast)",
+            "High Accuracy",
+            "Best Quality (Slow)"
         ])
         # Set tooltips for each item
         self.compute_combo.setItemData(0, "Checks 5 possibilities (low precision).", Qt.ToolTipRole)
@@ -360,13 +359,12 @@ class MainWindow(QMainWindow):
         # Spacer
         left_layout.addStretch()
 
-
-        # --- Right Pane: Logs ---
+        # --- Right Pane: Queue & Controls ---
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(20, 20, 20, 20)
 
-        # --- Files Queue (Moved to Right) ---
+        # 2. Files Queue
         queue_group = QGroupBox("2. Files to Transcribe")
         queue_layout = QVBoxLayout(queue_group)
 
@@ -451,12 +449,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat("%p%")
         right_layout.addWidget(self.progress_bar)
 
-        # Removed separate file status list (merged into main queue)
-        # status_label = QLabel("File Status")
-        # ...
-        # self.file_status_list = QListWidget()
-        # ...
-
         # Add widgets to splitter
         splitter.addWidget(left_widget)
         splitter.addWidget(right_widget)
@@ -503,17 +495,9 @@ class MainWindow(QMainWindow):
     # EVENTS
     # ---------------------------------------------------------
 
-    def _add_file_item(self, path_str: str) -> None:
-        """Add a file to the list with numbering and UserRole data."""
-        count = self.file_list.count() + 1
-        path = Path(path_str)
-        item = QListWidgetItem(f"{count}. {path.name} [In Queue]")
-        item.setData(Qt.UserRole, str(path.resolve()))
-        self.file_list.addItem(item)
-
     def on_files_dropped(self, paths: List[str]) -> None:
         for p in paths:
-            self._add_file_item(p)
+            self.file_list.addItem(p)
 
     def on_add_files_clicked(self) -> None:
         last_dir = self.settings.value("last_input_dir", "")
@@ -521,9 +505,7 @@ class MainWindow(QMainWindow):
             self, "Select media files", last_dir, MEDIA_FILTER
         )
         if paths:
-            for p in paths:
-                self._add_file_item(p)
-
+            self.file_list.addItems(paths)
             # Save the directory of the first file
             if paths:
                 first_file = Path(paths[0])
@@ -598,7 +580,14 @@ class MainWindow(QMainWindow):
     def _lazy_load_model(self) -> bool:
         # Parse compute type
         ctype_text = self.compute_combo.currentText()
-        compute_type = "float32" if "float32" in ctype_text else "int8"
+        # "Standard (Fast)" -> int8
+        # "High Accuracy" -> float32
+        # "Best Quality (Slow)" -> float32
+        if "High Accuracy" in ctype_text or "Best Quality" in ctype_text:
+            compute_type = "float32"
+        else:
+            compute_type = "int8"
+
         model_path = self.model_edit.text().strip()
 
         # Check if we need to reload
@@ -645,22 +634,15 @@ class MainWindow(QMainWindow):
         input_files = []
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
-            # Use UserRole if available (contains full path), otherwise text
-            path_str = item.data(Qt.UserRole)
-            if not path_str:
-                path_str = item.text()
-
-            path = Path(path_str)
+            path = Path(item.text())
             if path.is_file():
                 input_files.append(path)
-                # Reset text to "1. filename.mp3 [In Queue]"
-                item.setText(f"{i + 1}. {path.name} [In Queue]")
 
         if not input_files:
             self.show_error("No valid files found in list.")
             return
 
-        # self.file_status_list.clear() # Removed
+        self.file_status_list.clear()
         self.progress_bar.setValue(0)
         self.statusBar().showMessage("Starting transcription...")
         self._set_busy(True)
@@ -670,11 +652,11 @@ class MainWindow(QMainWindow):
         vad_filter = self.vad_check.isChecked()
         patience = 1.0
 
-        # Deep Analysis Mode
-        if "Deep Analysis" in self.compute_combo.currentText():
+        # Best Quality Mode
+        if "Best Quality" in self.compute_combo.currentText():
             beam_size = 10
             patience = 2.0
-            LOGGER.info("Deep Analysis Mode enabled: beam_size=10, patience=2.0")
+            LOGGER.info("Best Quality Mode enabled: beam_size=10, patience=2.0")
 
         # Get Language and Prompt
         lang_name = self.lang_combo.currentText()
@@ -725,26 +707,8 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def on_file_status_update(self, filename: str, status: str) -> None:
-        """Update status in the main file list."""
-        # Find the item with this filename
-        for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            path_str = item.data(Qt.UserRole)
-            # Fallback to text if UserRole is missing (shouldn't happen)
-            if not path_str:
-                path_str = item.text()
-
-            if Path(path_str).name == filename:
-                # Update text: "1. filename.mp3 [Status]"
-                item.setText(f"{i + 1}. {filename} [{status}]")
-
-                # Optional: Scroll to item
-                if status == "Processing":
-                    self.file_list.scrollToItem(item)
-                break
-
-        # Log to console as well
-        LOGGER.info(f"File Status: {filename} -> {status}")
+        self.file_status_list.addItem(f"{filename} → {status}")
+        self.file_status_list.scrollToBottom()
 
     def on_progress(self, percent: int) -> None:
         self.progress_bar.setValue(percent)
