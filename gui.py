@@ -623,10 +623,33 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Loading model...")
         try:
+            import os
+
+            # Try to detect GPU (optional - fallback to CPU if torch not available)
+            device = "cpu"
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    device = "cuda"
+                    # GPU: use float16 for speed (2-3x faster than float32)
+                    if compute_type == "int8":
+                        compute_type = "float16"  # int8 not supported on GPU
+                    LOGGER.info("CUDA GPU detected! Using GPU acceleration.")
+                else:
+                    LOGGER.info("CUDA not available. Using CPU.")
+            except ImportError:
+                LOGGER.info("PyTorch not installed. Using CPU mode only.")
+
+            # Use all available CPU cores for maximum speed
+            cpu_count = os.cpu_count() or 4
+
             config = TranscriptionConfig(
                 model_name=model_path,
                 language=None,
+                device=device,  # Auto-detect GPU or fallback to CPU
                 compute_type=compute_type,
+                cpu_threads=cpu_count,  # Use all CPU cores
+                num_workers=1,  # Keep at 1 for now (can increase for batch processing)
             )
             self._transcriber = Transcriber(config)
         except Exception as exc:

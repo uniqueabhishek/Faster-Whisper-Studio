@@ -133,6 +133,8 @@ class TranscriptionConfig:
     language: Optional[str] = None
     beam_size: int = 5
     best_of: int = 5
+    cpu_threads: int = 0  # 0 = auto-detect and use all cores
+    num_workers: int = 1  # Number of parallel workers for transcription
 
 
 @dataclass(frozen=True)
@@ -180,12 +182,16 @@ class Transcriber:
         LOGGER.info("Loading local offline model: %s", model_path)
         LOGGER.info("Device: %s, Compute type: %s",
                     self._config.device, self._config.compute_type)
+        LOGGER.info("CPU threads: %d, Workers: %d",
+                    self._config.cpu_threads, self._config.num_workers)
 
         try:
             return WhisperModel(
                 str(model_path),
                 device=self._config.device,
                 compute_type=self._config.compute_type,
+                cpu_threads=self._config.cpu_threads,
+                num_workers=self._config.num_workers,
             )
         except Exception as e:
             LOGGER.error("Failed to load model: %s", str(e))
@@ -366,21 +372,38 @@ class Transcriber:
             return f"{mm:02d}:{ss:02d}"
 
         ai_processed_duration = 0.0
+        last_progress = -1
+        segment_count = 0
+        last_log_time = time.time()
+
         for segment in segments:
+            segment_count += 1
+
+            # Log progress every 10 seconds to track speed
+            current_time_elapsed = time.time() - last_log_time
+            if current_time_elapsed >= 10.0:
+                audio_progress = segment.end if hasattr(segment, 'end') else 0
+                progress_pct = (audio_progress / total_duration * 100) if total_duration > 0 else 0
+                LOGGER.info("Segment #%d: %.1f%% complete (%.1f seconds of audio processed)",
+                           segment_count, progress_pct, audio_progress)
+                last_log_time = time.time()
             ai_processed_duration += (segment.end - segment.start)
-            if getattr(segment, "text", "").strip():
+            text_content = segment.text.strip() if segment.text else ""
+            if text_content:
                 if add_timestamps:
                     start_str = format_timestamp(segment.start)
                     end_str = format_timestamp(segment.end)
-                    lines.append(f"[{start_str} -> {end_str}] {segment.text.strip()}")
+                    lines.append(f"[{start_str} -> {end_str}] {text_content}")
                 else:
-                    lines.append(segment.text.strip())
+                    lines.append(text_content)
 
-            # Update progress
+            # Update progress (only when it changes by at least 1% to reduce overhead)
             if progress_callback and total_duration > 0:
                 current_time = segment.end
                 percent = int((current_time / total_duration) * 100)
-                progress_callback(min(percent, 100))
+                if percent != last_progress:
+                    progress_callback(min(percent, 100))
+                    last_progress = percent
 
         text = "\n".join(lines)
         LOGGER.info("Processed %d text lines", len(lines))
