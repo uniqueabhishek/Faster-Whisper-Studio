@@ -1,4 +1,5 @@
 """PyQt5 GUI for Faster-Whisper transcription app."""
+# pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false
 
 from __future__ import annotations
 
@@ -751,12 +752,19 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(percent)
 
     def on_finished(self, results: List[TranscriptionResult]) -> None:
+        LOGGER.info("on_finished() called with %d results", len(results))
         self.statusBar().showMessage(f"Completed. Files: {len(results)}")
         self._worker = None
         self._set_busy(False)
         self.progress_bar.setValue(100)
+        LOGGER.info("Clearing file list...")
+        # Disable UI updates while clearing for better performance
+        self.file_list.setUpdatesEnabled(False)
         self.file_list.clear()  # Auto-clear queue
+        self.file_list.setUpdatesEnabled(True)
+        LOGGER.info("File list cleared")
         QMessageBox.information(self, "Done", f"Successfully processed {len(results)} files.")
+        LOGGER.info("on_finished() complete")
 
     def on_failed(self, message: str) -> None:
         self.show_error(message)

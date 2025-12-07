@@ -1,4 +1,5 @@
 """Transcription utilities for Faster-Whisper GUI app."""
+# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
 
 from __future__ import annotations
 from faster_whisper import WhisperModel

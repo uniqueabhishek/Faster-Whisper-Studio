@@ -1,3 +1,4 @@
+# pyright: reportMissingModuleSource=false
 import os
 import subprocess
 import sys
