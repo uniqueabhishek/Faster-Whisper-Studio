@@ -49,29 +49,33 @@ A powerful desktop GUI application for accurate audio/video transcription using 
 
 ## Installation
 
-### Option 1: From Source
+### Quick Start (Recommended)
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/Faster-Whisper_GUI_APP.git
-   cd Faster-Whisper_GUI_APP
-   ```
+1. **Launch the application**
+   - Simply double-click `start_app.bat` in the project folder.
+   - This script automatically handles Python environments and dependencies for you.
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   ```
+### Option 1: From Source (Developer Setup)
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+This project uses `uv` for fast, reliable dependency management and to ensure the correct Python version (3.10) is used, regardless of what is installed on your system.
 
-4. **Run the application**
-   ```bash
-   python app.py
-   ```
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/yourusername/Faster-Whisper_GUI_APP.git
+    cd Faster-Whisper_GUI_APP
+    ```
+
+2.  **Install uv (if not installed)**
+    ```powershell
+    # Windows
+    powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+    ```
+
+3.  **Setup Environment & Run**
+    ```bash
+    # This automatically creates a Python 3.10 env, installs deps, and runs the app
+    uv run python app.py
+    ```
 
 ### Option 2: Standalone Executable
 
