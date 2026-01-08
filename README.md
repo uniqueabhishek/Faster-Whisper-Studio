@@ -2,6 +2,14 @@
 
 A powerful desktop GUI application for accurate audio/video transcription using OpenAI's Whisper model via the faster-whisper implementation. Features advanced audio preprocessing, batch processing, session recovery, and intelligent memory management.
 
+<p align="center">
+  <img src="assets/screenshot-main.png" alt="Main Interface" width="800"/>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-preprocessing.png" alt="Preprocessing Interface" width="800"/>
+</p>
+
 ## Features
 
 ### Core Transcription
