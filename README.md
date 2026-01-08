@@ -331,3 +331,8 @@ For issues, questions, or suggestions:
 ---
 
 **Made with Faster-Whisper and PyQt5**
+<<<<<<< HEAD
+=======
+<img width="1398" height="838" alt="image" src="https://github.com/user-attachments/assets/a5851bc7-7cde-4fb2-bbb9-ed4b3811184b" />
+<img width="1397" height="836" alt="image" src="https://github.com/user-attachments/assets/110a7b09-533c-4325-a95f-17b0e3355d21" />
+>>>>>>> 484a05ee8fbac4165816a017c622fc41aab1c019
