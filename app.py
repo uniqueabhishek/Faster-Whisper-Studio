@@ -8,7 +8,7 @@ import traceback
 
 # Fix for DLL load failed error: onnxruntime must be imported before PyQt5
 try:
-    import onnxruntime  # noqa: F401 - Must be imported before PyQt5
+    import onnxruntime  # noqa: F401 pylint: disable=unused-import  # Must be imported before PyQt5
 except ImportError:
     pass
 
@@ -56,6 +56,21 @@ def main() -> None:
 
     try:
         app = QApplication(sys.argv)
+
+        # --- LICENSE CHECK START ---
+        try:
+            import license_guard  # pylint: disable=import-outside-toplevel
+            if not license_guard.verify_license_gui():
+                sys.exit(1)
+        except ImportError:
+            QMessageBox.critical(
+                None, "Security Error", "License module missing! Re-install application.")
+            sys.exit(1)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            QMessageBox.critical(None, "Security Error",
+                                 f"License check failed: {e}")
+            sys.exit(1)
+        # --- LICENSE CHECK END ---
 
         # Show main window with sidebar navigation
         window = MainWindow()

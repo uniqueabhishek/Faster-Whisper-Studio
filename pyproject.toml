@@ -3,7 +3,7 @@ name = "faster-whisper-gui-app"
 version = "0.1.0"
 description = "A powerful desktop GUI application for accurate audio/video transcription using OpenAI's Whisper model."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "PyQt5>=5.15.10",
     "pyqt5-qt5==5.15.2",
@@ -20,6 +20,11 @@ dependencies = [
     "librosa>=0.10.0",
     "python-docx>=0.8.11",
     "pyinstaller>=6.0.0",
+    "pyarmor",
+    "cryptography",
+    "wmi",
+    "pywin32",
+    "ntplib",
 ]
 
 [build-system]

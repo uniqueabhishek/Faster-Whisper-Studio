@@ -31,3 +31,9 @@ dist/
 .DS_Store
 Thumbs.db
 nul
+
+# AI/LLM
+.claude/
+
+# Security
+admin_keys/
