@@ -11,45 +11,78 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 # --- EMBEDDED PUBLIC KEY (Populated by setup_security.py) ---
-PUBLIC_KEY_PEM = b"""{{PUBLIC_KEY_PEM}}"""
+PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAnT7y+CZ4m+2vzVbvuU4ydAKDBzUDMnnzF7ElUQFXed4=
+-----END PUBLIC KEY-----
+"""
 LICENSE_FILE = "license.dat"
 
 
+def _legacy_machine_id():
+    """Fallback HWID from hostname + MAC. Unstable; used only if WMI fails."""
+    import socket
+    import uuid
+    hostname = socket.gethostname()
+    mac = uuid.getnode()
+    raw_id = f"{hostname}-{mac}"
+    return hashlib.sha256(raw_id.encode()).hexdigest()
+
+
 def get_machine_id():
-    """Generates a unique Machine ID (HWID) based on hardware serials."""
+    """Generates a stable, unique Machine ID (HWID) from hardware serials.
+
+    Uses the SMBIOS UUID, motherboard serial, and CPU ID via WMI. These
+    survive reboots, network changes, and VPNs (unlike hostname/MAC). Falls
+    back to the legacy hostname+MAC method only if WMI is unavailable.
+    """
     try:
         c = wmi.WMI()
-        try:
-            board = c.Win32_BaseBoard()[0].SerialNumber.strip()
-        except:
-            board = "UnknownBoard"
+        parts = []
 
         try:
-            cpu = c.Win32_Processor()[0].ProcessorId.strip()
-        except:
-            cpu = "UnknownCPU"
+            uuid_val = c.Win32_ComputerSystemProduct()[0].UUID
+            if uuid_val and uuid_val.strip("0-") and "FFFFFFFF" not in uuid_val.upper():
+                parts.append(f"uuid:{uuid_val}")
+        except Exception:  # pylint: disable=broad-except
+            pass
 
         try:
-            disk = c.Win32_DiskDrive(MediaType="Fixed hard disk media")[
-                0].SerialNumber.strip()
-        except:
-            # Fallback if no fixed disk found
-            disk = "UnknownDisk"
+            board_serial = c.Win32_BaseBoard()[0].SerialNumber
+            if board_serial and board_serial.strip() and "O.E.M." not in board_serial.upper():
+                parts.append(f"board:{board_serial.strip()}")
+        except Exception:  # pylint: disable=broad-except
+            pass
 
-        raw_id = f"{board}-{cpu}-{disk}"
+        try:
+            cpu_id = c.Win32_Processor()[0].ProcessorId
+            if cpu_id and cpu_id.strip():
+                parts.append(f"cpu:{cpu_id.strip()}")
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        if not parts:
+            # No stable hardware identifiers available; fall back.
+            return _legacy_machine_id()
+
+        raw_id = "|".join(parts)
         return hashlib.sha256(raw_id.encode()).hexdigest()
-    except Exception as e:
-        print(f"Error generating HWID: {e}")
-        return "ERROR_GENERATING_HWID"
+    except Exception as e:  # pylint: disable=broad-except
+        print(f"WMI HWID failed, using legacy method: {e}")
+        try:
+            return _legacy_machine_id()
+        except Exception as e2:  # pylint: disable=broad-except
+            print(f"Error generating HWID: {e2}")
+            return "ERROR_GENERATING_HWID"
 
 
 def get_network_time():
     """Gets the current time from an NTP server."""
     try:
         client = ntplib.NTPClient()
-        response = client.request('pool.ntp.org', version=3)
+        response = client.request('pool.ntp.org', version=3, timeout=5)
         return datetime.fromtimestamp(response.tx_time)
-    except:
+    except Exception as e:
+        print(f"NTP time fetch failed (using local time): {e}")
         return None
 
 
@@ -82,7 +115,7 @@ def verify_license_gui():
         data_json_str = json.dumps(data, sort_keys=True)
         try:
             public_key.verify(signature, data_json_str.encode())
-        except:
+        except Exception:  # pylint: disable=broad-except
             show_error(
                 "License Error", "Invalid License Signature.\n\nThe license file has been tampered with.")
             sys.exit(1)

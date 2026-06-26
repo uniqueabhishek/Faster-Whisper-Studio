@@ -1,37 +1,9 @@
-import hashlib
-import wmi
 import os
 
-
-def get_machine_id():
-    """
-    Generates a unique Machine ID (HWID) based on hardware serials.
-    MUST MATCH logic in license_guard.py exactly!
-    """
-    try:
-        c = wmi.WMI()
-        try:
-            board = c.Win32_BaseBoard()[0].SerialNumber.strip()
-        except:
-            board = "UnknownBoard"
-
-        try:
-            cpu = c.Win32_Processor()[0].ProcessorId.strip()
-        except:
-            cpu = "UnknownCPU"
-
-        try:
-            disk = c.Win32_DiskDrive(MediaType="Fixed hard disk media")[
-                0].SerialNumber.strip()
-        except:
-            # Fallback if no fixed disk found
-            disk = "UnknownDisk"
-
-        raw_id = f"{board}-{cpu}-{disk}"
-        return hashlib.sha256(raw_id.encode()).hexdigest()
-    except Exception as e:
-        print(f"Error generating HWID: {e}")
-        return "ERROR_GENERATING_HWID"
+# Single source of truth: reuse the exact same logic the app uses to verify
+# licenses. This guarantees the ID a customer sends matches what license_guard
+# computes at runtime — they can never drift apart.
+from license_guard import get_machine_id
 
 
 def main():
