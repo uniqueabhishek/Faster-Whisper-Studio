@@ -38,6 +38,8 @@ from transcriber import (
     TranscriptionConfig,
     Transcriber,
     TranscriptionResult,
+    detect_device,
+    resolve_quality,
 )
 from workers import BatchWorker, ModelLoaderWorker
 from styles import DARK_THEME_QSS, apply_dark_title_bar
@@ -583,46 +585,24 @@ class TranscriptionView(QWidget):
         """
         import os
 
-        # Parse compute type
-        # "Fast Analysis (int8)" -> int8
-        # "Precise Analysis (float32)" / "Deep Analysis (float32)" -> float32
-        ctype_text = self.compute_combo.currentText()
-        if "Precise" in ctype_text or "Deep" in ctype_text:
-            compute_type = "float32"
-        else:
-            compute_type = "int8"
-
         model_path = self.model_edit.text().strip()
         if not model_path:
             self.show_error("No model selected.")
             return None
 
-        # Detect GPU via CTranslate2's own CUDA runtime — no torch dependency.
-        # (CTranslate2 is what actually runs the model and ships its own CUDA
-        # libs, so its device count is the authoritative signal.)
-        device = "cpu"
-        try:
-            import ctranslate2
-            if ctranslate2.get_cuda_device_count() > 0:
-                device = "cuda"
-                # GPU: use float16 for speed (2-3x faster than float32)
-                if compute_type == "int8":
-                    compute_type = "float16"  # int8 not supported on GPU
-                LOGGER.info("CUDA GPU detected! Using GPU acceleration.")
-            else:
-                LOGGER.info("CUDA not available. Using CPU.")
-        except Exception as exc:  # pylint: disable=broad-except
-            LOGGER.info("GPU detection unavailable (%s). Using CPU.", exc)
-
-        # Use all available CPU cores for maximum speed
-        cpu_count = os.cpu_count() or 4
+        # Device detection + the depth->compute/beam/patience policy live in
+        # transcriber.py, not in the widget.
+        device = detect_device()
+        LOGGER.info("Using %s.", "CUDA GPU" if device == "cuda" else "CPU")
+        compute_type = resolve_quality(
+            self.compute_combo.currentText(), device)["compute_type"]
 
         return TranscriptionConfig(
             model_name=model_path,
             language=None,
             device=device,  # Auto-detect GPU or fallback to CPU
             compute_type=compute_type,
-            cpu_threads=cpu_count,  # Use all CPU cores
+            cpu_threads=os.cpu_count() or 4,  # Use all CPU cores
             num_workers=1,  # Keep at 1 for now (can increase for batch processing)
         )
 
@@ -673,15 +653,11 @@ class TranscriptionView(QWidget):
         self._set_busy(True)
         self.transcription_started.emit()  # Emit signal
 
-        # Use BatchWorker for everything now
-        beam_size = 5
-        patience = 1.0
-
-        # Best Quality Mode
-        if "Deep Analysis" in self.compute_combo.currentText():
-            beam_size = 10
-            patience = 2.0
-            LOGGER.info("Deep Analysis Mode enabled: beam_size=10, patience=2.0")
+        # beam_size / patience come from the same depth policy as compute_type.
+        quality = resolve_quality(self.compute_combo.currentText(), config.device)
+        beam_size = quality["beam_size"]
+        patience = quality["patience"]
+        LOGGER.info("Analysis depth -> beam_size=%d, patience=%.1f", beam_size, patience)
 
         # Get Language and Prompt
         lang_name = self.lang_combo.currentText()

@@ -210,6 +210,39 @@ def format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def detect_device() -> str:
+    """Return 'cuda' if CTranslate2 sees a GPU, else 'cpu' (no torch dependency).
+
+    CTranslate2 runs the model and ships its own CUDA libs, so its device count
+    is the authoritative signal.
+    """
+    try:
+        import ctranslate2  # pylint: disable=import-outside-toplevel
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.info("GPU detection unavailable (%s). Using CPU.", exc)
+    return "cpu"
+
+
+def resolve_quality(depth_label: str, device: str = "cpu") -> dict:
+    """Map a UI 'analysis depth' label to engine settings.
+
+    Keeps this policy out of the GUI. beam_size/patience are device-independent;
+    compute_type is adjusted for the device (int8 is unsupported on CUDA).
+    """
+    label = (depth_label or "").lower()
+    if "deep" in label:
+        compute_type, beam_size, patience = "float32", 10, 2.0
+    elif "precise" in label:
+        compute_type, beam_size, patience = "float32", 5, 1.0
+    else:  # Fast / default
+        compute_type, beam_size, patience = "int8", 5, 1.0
+    if device == "cuda" and compute_type == "int8":
+        compute_type = "float16"  # int8 not supported on GPU
+    return {"compute_type": compute_type, "beam_size": beam_size, "patience": patience}
+
+
 # Lightweight stand-in for faster-whisper's TranscriptionInfo, used when we
 # assemble segments ourselves (the smart-chunking path) and have no real info
 # object from the model. Defined once here rather than re-declared inline.

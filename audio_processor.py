@@ -436,8 +436,9 @@ def trim_silence_vad(
             LOGGER.info("Falling back to simple silence trimming with ffmpeg...")
             return _trim_silence_ffmpeg(input_path, output_path, cancel_check)
 
-        # Load audio
-        audio, sample_rate = sf.read(str(input_path))
+        # Load audio as float32 (Silero VAD expects float32; this also halves
+        # the buffer vs soundfile's float64 default).
+        audio, sample_rate = sf.read(str(input_path), dtype="float32")
 
         if cancel_check and cancel_check():
             return False
@@ -510,8 +511,11 @@ def trim_silence_vad(
                         i + 1, start_sample / sample_rate, end_sample / sample_rate,
                         (end_sample - start_sample) / sample_rate)
 
-        # Concatenate all speech segments
+        # Concatenate all speech segments, then free the full-audio buffer and
+        # the per-segment views before writing (peak was 2-3x the audio size).
+        original_len = len(audio)
         trimmed_audio = np.concatenate(speech_segments)
+        del audio, speech_segments
 
         if cancel_check and cancel_check():
             return False
@@ -519,7 +523,7 @@ def trim_silence_vad(
         # Save trimmed audio
         sf.write(str(output_path), trimmed_audio, sample_rate)
 
-        duration_removed = (len(audio) - len(trimmed_audio)) / sample_rate
+        duration_removed = (original_len - len(trimmed_audio)) / sample_rate
         LOGGER.info("Removed %.2f seconds of silence from %s (kept %d speech segments)",
                    duration_removed, input_path.name, len(speech_timestamps))
         return True
