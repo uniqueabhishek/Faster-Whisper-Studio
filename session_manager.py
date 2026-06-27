@@ -174,6 +174,39 @@ class SessionManager:
             except Exception as e:
                 LOGGER.error("Failed to save session %s: %s", state.session_id, e)
 
+    def _is_session_safe(self, state: SessionState, expected_id: str) -> bool:
+        """Validate a loaded session before trusting its paths.
+
+        Guards against a planted/tampered session.json: the id must match the
+        filename, and each file's resolved output (output_dir/<stem>.txt) must
+        stay inside output_dir, so a crafted entry can't create/overwrite files
+        elsewhere on resume.
+        """
+        if state.session_id != expected_id:
+            LOGGER.warning("Session id mismatch: %s != %s",
+                           state.session_id, expected_id)
+            return False
+
+        out_base = None
+        if state.output_dir:
+            try:
+                out_base = Path(state.output_dir).resolve()
+            except (OSError, ValueError):
+                LOGGER.warning("Session has an invalid output_dir: %r", state.output_dir)
+                return False
+
+        for file_status in state.files:
+            try:
+                stem = Path(file_status.path).stem
+                if out_base is not None:
+                    target = (out_base / f"{stem}.txt").resolve()
+                    if not target.is_relative_to(out_base):
+                        LOGGER.warning("Session output escapes output_dir: %s", target)
+                        return False
+            except (OSError, ValueError):
+                return False
+        return True
+
     def load_session(self, session_id: str) -> Optional[SessionState]:
         """Load session state from disk."""
         session_file = self.session_dir / f"{session_id}.json"
@@ -191,6 +224,12 @@ class SessionManager:
             data['files'] = files
 
             state = SessionState(**data)
+
+            if not self._is_session_safe(state, session_id):
+                LOGGER.error(
+                    "Refusing to load session %s: failed safety validation", session_id)
+                return None
+
             LOGGER.info("Loaded session: %s (%d files, %d pending)",
                        session_id, len(state.files), len(state.pending_files))
 
@@ -331,8 +370,9 @@ class SessionManager:
         temp_dir = Path(tempfile.gettempdir())
         cleaned = 0
 
-        # Find all .wav files in temp directory
-        for temp_file in temp_dir.glob("tmp*.wav"):
+        # Only our own temp WAVs (mkstemp uses the fwgui_ prefix) so we never
+        # delete another app's or another user's tmp*.wav.
+        for temp_file in temp_dir.glob("fwgui_*.wav"):
             try:
                 # Check if file is older than 1 hour
                 age_seconds = time.time() - temp_file.stat().st_mtime

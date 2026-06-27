@@ -86,6 +86,17 @@ def test_delete_session(tmp_path):
     assert mgr.load_session(state.session_id) is None
 
 
+def test_rejects_tampered_session_id(tmp_path):
+    # A planted/copied session.json whose internal id no longer matches the
+    # filename must be refused (defense against writing to attacker paths).
+    import shutil
+    mgr = _mgr(tmp_path)
+    state = mgr.create_session(input_files=[tmp_path / "a.mp3"], model_path="m")
+    sessions = tmp_path / "sessions"
+    shutil.copy(sessions / f"{state.session_id}.json", sessions / "tampered.json")
+    assert mgr.load_session("tampered") is None
+
+
 def test_concurrent_updates_never_corrupt_the_file(tmp_path):
     # Regression: concurrent json.dump from multiple worker threads previously
     # produced a torn/truncated session file that load_session silently dropped

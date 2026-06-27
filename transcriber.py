@@ -286,7 +286,7 @@ class Transcriber:
 
         try:
             # Create temp file path
-            fd, temp_path = tempfile.mkstemp(suffix=".wav")
+            fd, temp_path = tempfile.mkstemp(prefix="fwgui_", suffix=".wav")
             os.close(fd)
             temp_path = Path(temp_path)
 
@@ -353,7 +353,7 @@ class Transcriber:
         """
         temp_path = None
         try:
-            fd, temp_path = tempfile.mkstemp(suffix=".wav")
+            fd, temp_path = tempfile.mkstemp(prefix="fwgui_", suffix=".wav")
             os.close(fd)
             temp_path = Path(temp_path)
 
