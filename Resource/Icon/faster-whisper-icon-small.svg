@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#143ea8"></stop>
+      <stop offset="1" stop-color="#18c6ff"></stop>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.3" cy="0" r="0.95">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"></stop>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0"></stop>
+    </radialGradient>
+    <clipPath id="sq"><rect x="0" y="0" width="1024" height="1024" rx="210" ry="210"></rect></clipPath>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"></rect>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#gloss)"></rect>
+  </g>
+  <g fill="#9fe9ff">
+    <rect x="300" y="250" width="78" height="150" rx="39"></rect>
+    <rect x="430" y="190" width="78" height="280" rx="39"></rect>
+    <rect x="560" y="240" width="78" height="180" rx="39"></rect>
+    <rect x="690" y="270" width="78" height="120" rx="39"></rect>
+  </g>
+  <text x="512" y="830" text-anchor="middle" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-weight="800" font-size="430" letter-spacing="-14" fill="#ffffff">Aa</text>
+</svg>

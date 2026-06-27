@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#143ea8"></stop>
+      <stop offset="1" stop-color="#18c6ff"></stop>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.3" cy="0" r="0.95">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"></stop>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0"></stop>
+    </radialGradient>
+    <radialGradient id="shade" cx="0.72" cy="1.05" r="0.7">
+      <stop offset="0" stop-color="#04123c" stop-opacity="0.34"></stop>
+      <stop offset="0.65" stop-color="#04123c" stop-opacity="0"></stop>
+    </radialGradient>
+    <clipPath id="sq"><rect x="0" y="0" width="1024" height="1024" rx="230" ry="230"></rect></clipPath>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"></rect>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#shade)"></rect>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#gloss)"></rect>
+    <rect x="0" y="6" width="1024" height="10" fill="#ffffff" opacity="0.30"></rect>
+  </g>
+  <g fill="#9fe9ff">
+    <rect x="224" y="275" width="52" height="90" rx="26"></rect>
+    <rect x="320" y="230" width="52" height="180" rx="26"></rect>
+    <rect x="416" y="175" width="52" height="290" rx="26"></rect>
+    <rect x="512" y="245" width="52" height="150" rx="26"></rect>
+    <rect x="608" y="203" width="52" height="235" rx="26"></rect>
+    <rect x="704" y="265" width="52" height="110" rx="26"></rect>
+    <rect x="800" y="285" width="52" height="70" rx="26"></rect>
+  </g>
+  <text x="512" y="800" text-anchor="middle" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-weight="800" font-size="380" letter-spacing="-12" fill="#ffffff">Aa</text>
+</svg>

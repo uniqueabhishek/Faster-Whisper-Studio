@@ -16,7 +16,26 @@ except ImportError:
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from main_window import MainWindow
+from ui_common import app_icon
 from workers import EXECUTOR
+
+
+def _set_app_user_model_id() -> None:
+    """Give Windows an explicit AppUserModelID.
+
+    Without this, a script launched via python(w).exe is grouped under the
+    Python icon in the taskbar regardless of the window icon. Setting a stable
+    ID makes the taskbar use our own application icon.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes  # pylint: disable=import-outside-toplevel
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "FasterWhisperGUI")
+    except Exception:  # pylint: disable=broad-except
+        # Cosmetic only — never let taskbar grouping crash startup.
+        pass
 
 
 def exception_hook(exctype, value, tb):
@@ -43,6 +62,9 @@ def main() -> None:
     # Install global exception hook
     sys.excepthook = exception_hook
 
+    # Must run before any window is created so the taskbar groups under our icon.
+    _set_app_user_model_id()
+
     # Setup logging to both file and console
     logging.basicConfig(
         level=logging.INFO,
@@ -56,6 +78,7 @@ def main() -> None:
 
     try:
         app = QApplication(sys.argv)
+        app.setWindowIcon(app_icon())
 
         # --- LICENSE CHECK START ---
         try:

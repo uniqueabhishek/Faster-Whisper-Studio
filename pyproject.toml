@@ -36,5 +36,6 @@ packages = ["."]
 include = [
     "*.py",
     "assets",
+    "Resource",
     "*.spec"
 ]

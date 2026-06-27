@@ -20,13 +20,17 @@ def build():
 
     separator = ";" if os.name == 'nt' else ":"
 
+    icon_path = os.path.join("Resource", "Icon", "faster-whisper-icon.ico")
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconsole",
         "--clean",
         "-y",
         "--name", "FasterWhisperGUI",
+        "--icon", icon_path,
         "--add-data", f"assets{separator}assets",
+        "--add-data", f"Resource{separator}Resource",
         "--hidden-import", "df",
         "--hidden-import", "torchaudio",
         "--hidden-import", "soundfile",
