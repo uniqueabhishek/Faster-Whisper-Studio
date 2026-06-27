@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import subprocess
 import tempfile
@@ -24,6 +25,28 @@ from ffmpeg_utils import get_ffmpeg_path
 
 # Prefer a bundled ffmpeg (assets/ffmpeg/); fall back to PATH, then the bare name.
 _FFMPEG = get_ffmpeg_path() or "ffmpeg"
+
+# Temp dirs created this session when no output dir was configured. Their final
+# _preprocessed.wav is consumed later by transcription, so they can't be deleted
+# on return — instead we remove them on normal app exit (the stale-dir reaper
+# covers crashes).
+# Default VAD (voice-activity-detection) tuning for the preprocessing config.
+DEFAULT_VAD_MIN_SILENCE_MS = 3000
+DEFAULT_VAD_SPEECH_PAD_MS = 1000
+DEFAULT_VAD_THRESHOLD = 0.1
+
+_SESSION_PREPROCESS_DIRS: list[Path] = []
+
+
+@atexit.register
+def _cleanup_session_preprocess_dirs() -> None:
+    import shutil
+    for directory in _SESSION_PREPROCESS_DIRS:
+        try:
+            if directory.exists():
+                shutil.rmtree(directory, ignore_errors=True)
+        except OSError:
+            pass
 
 
 @dataclass
@@ -51,9 +74,9 @@ class PreprocessingConfig:
     normalize_loudness_range: int = 11    # Loudness range
 
     # VAD parameters
-    vad_min_silence_ms: int = 3000        # Min silence duration (ms)
-    vad_speech_pad_ms: int = 1000         # Speech padding (ms)
-    vad_threshold: float = 0.1            # Detection threshold
+    vad_min_silence_ms: int = DEFAULT_VAD_MIN_SILENCE_MS   # Min silence duration (ms)
+    vad_speech_pad_ms: int = DEFAULT_VAD_SPEECH_PAD_MS     # Speech padding (ms)
+    vad_threshold: float = DEFAULT_VAD_THRESHOLD           # Detection threshold
 
     # WAV Conversion parameters
     wav_sample_rate: int = 16000          # Sample rate (Hz)
@@ -607,8 +630,9 @@ def preprocess_audio(
             output_dir = config.output_dir
             output_dir.mkdir(parents=True, exist_ok=True)
         else:
-            # Create temp directory
+            # Create temp directory; track it for cleanup on app exit.
             output_dir = Path(tempfile.mkdtemp(prefix="whisper_preprocess_"))
+            _SESSION_PREPROCESS_DIRS.append(output_dir)
 
         # Generate output filename
         output_filename = f"{input_path.stem}_preprocessed.wav"

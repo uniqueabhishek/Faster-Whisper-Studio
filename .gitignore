@@ -39,6 +39,10 @@ nul
 
 # Security
 admin_keys/
+# Customer licenses and build artifacts that must never be committed
+license*.dat
+*.bak
+pyarmor_runtime*/
 
 # Large redistributable binary (fetched at build time via download_vc_redist.py)
 assets/vc_redist.x64.exe

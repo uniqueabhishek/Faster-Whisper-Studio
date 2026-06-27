@@ -16,11 +16,11 @@ dependencies = [
     "librosa>=0.10.0",
     "python-docx>=0.8.11",
     "pyinstaller>=6.0.0",
-    "pyarmor",
-    "cryptography",
-    "wmi",
-    "pywin32",
-    "ntplib",
+    "pyarmor==9.2.3",
+    "cryptography>=46.0.4,<47",
+    "wmi>=1.5.1",
+    "pywin32>=311",
+    "ntplib>=0.4.0",
 ]
 
 [build-system]

@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import hashlib
 import wmi
 import base64
@@ -9,6 +10,8 @@ from datetime import datetime
 from PySide6.QtWidgets import QMessageBox
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
+
+LOGGER = logging.getLogger(__name__)
 
 # --- EMBEDDED PUBLIC KEY (Populated by setup_security.py) ---
 PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
@@ -67,11 +70,11 @@ def get_machine_id():
         raw_id = "|".join(parts)
         return hashlib.sha256(raw_id.encode()).hexdigest()
     except Exception as e:  # pylint: disable=broad-except
-        print(f"WMI HWID failed, using legacy method: {e}")
+        LOGGER.warning("WMI HWID failed, using legacy method: %s", e)
         try:
             return _legacy_machine_id()
         except Exception as e2:  # pylint: disable=broad-except
-            print(f"Error generating HWID: {e2}")
+            LOGGER.error("Error generating HWID: %s", e2)
             return "ERROR_GENERATING_HWID"
 
 
@@ -82,7 +85,7 @@ def get_network_time():
         response = client.request('pool.ntp.org', version=3, timeout=5)
         return datetime.fromtimestamp(response.tx_time)
     except Exception as e:
-        print(f"NTP time fetch failed (using local time): {e}")
+        LOGGER.warning("NTP time fetch failed (using local time): %s", e)
         return None
 
 
@@ -91,10 +94,10 @@ def verify_license_gui():
     Verifies the license and handles GUI alerts.
     Exits the app if invalid.
     """
-    print("--- LICENSE CHECK ---")
+    LOGGER.info("--- LICENSE CHECK ---")
 
     current_hwid = get_machine_id()
-    print(f"Current Machine ID: {current_hwid}")
+    LOGGER.info("Current Machine ID: %s", current_hwid)
 
     if not os.path.exists(LICENSE_FILE):
         show_error("License Missing",
@@ -135,7 +138,7 @@ def verify_license_gui():
                        f"Your subscription ended on {data['expiry']}.\nPlease renew.")
             sys.exit(1)
 
-        print("License Valid.")
+        LOGGER.info("License Valid.")
         return True
 
     except Exception as e:

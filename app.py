@@ -46,7 +46,6 @@ def exception_hook(exctype, value, tb):
     """Global exception handler to catch unhandled exceptions."""
     error_msg = ''.join(traceback.format_exception(exctype, value, tb))
     logging.error("Unhandled exception:\n%s", error_msg)
-    print(f"\n\nUNHANDLED EXCEPTION:\n{error_msg}")
 
     # Try to show error dialog if possible
     try:
@@ -156,8 +155,12 @@ def main() -> None:
     except Exception:  # pylint: disable=broad-except
         # Catch-all for any fatal crashes at the top level
         logging.exception("Fatal error in application")
-        print(f"\n\nFATAL ERROR:\n{traceback.format_exc()}")
-        input("Press Enter to exit...")
+        # Pause for visibility when run from a console; guarded so it can't hang
+        # or raise in a --noconsole build (no stdin attached).
+        try:
+            input("Press Enter to exit...")
+        except Exception:  # pylint: disable=broad-except
+            pass
     finally:
         # Ensure all worker threads terminate cleanly
         EXECUTOR.shutdown(wait=False)
