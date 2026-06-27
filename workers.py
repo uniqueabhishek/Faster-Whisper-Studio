@@ -16,6 +16,28 @@ from memory_manager import MemoryManager, MemoryMonitor
 
 LOGGER = logging.getLogger(__name__)
 
+_BANNER_WIDTH = 60
+
+
+def _log_file_header(index: int, total: int, filename: str) -> None:
+    """Emit a clear visual banner marking the start of a file's processing.
+
+    Without this, consecutive files (and back-to-back runs of the same file with
+    different models) run together in the GUI log with no obvious boundary.
+    """
+    LOGGER.info("")
+    LOGGER.info("=" * _BANNER_WIDTH)
+    LOGGER.info("FILE %d/%d:  %s", index, total, filename)
+    LOGGER.info("=" * _BANNER_WIDTH)
+
+
+def _log_batch_footer(succeeded: int, failed: int) -> None:
+    """Emit a clear end-of-batch banner so one run is visually closed off."""
+    LOGGER.info("")
+    LOGGER.info("=" * _BANNER_WIDTH)
+    LOGGER.info("BATCH COMPLETE:  %d succeeded, %d failed", succeeded, failed)
+    LOGGER.info("=" * _BANNER_WIDTH)
+
 
 class ModelLoaderWorker(QThread):
     """Loads the Whisper model off the GUI thread.
@@ -84,6 +106,11 @@ class BatchWorker(QThread):
         self._model_lock = threading.Lock()
         self._prep_lock = threading.Lock() # Lock for audio preparation (ffmpeg)
         self._pipeline_semaphore = threading.Semaphore(1)  # Only 1 file can be "in-flight" (preprocessing+transcribing) at a time
+        # Serial counter for the per-file log banner. The pipeline semaphore
+        # serializes file processing, but two pool threads can still call _job,
+        # so guard the increment with a lock.
+        self._start_lock = threading.Lock()
+        self._start_index = 0
 
         # Session management
         self._session_manager = SessionManager()
@@ -143,6 +170,8 @@ class BatchWorker(QThread):
         # Calculate already processed count for progress
         already_processed = len(self._session.completed_files) + len(self._session.failed_files)
         processed = already_processed
+        # Continue the file-banner numbering past anything finished in a prior run.
+        self._start_index = already_processed
 
         # Log initial memory usage
         MemoryManager.log_memory_usage("Batch start:")
@@ -170,6 +199,14 @@ class BatchWorker(QThread):
             # Acquire semaphore to control pipeline - only 1 file can be preprocessing+transcribing at once
             # This prevents both workers from preprocessing files in parallel at startup
             self._pipeline_semaphore.acquire()
+
+            # Now that we hold the only in-flight slot, banner this file's start.
+            # Logged here (not inside transcribe_file) so the banner sits above
+            # the file's audio-prep lines too, bracketing all of its output.
+            with self._start_lock:
+                self._start_index += 1
+                file_index = self._start_index
+            _log_file_header(file_index, total, path.name)
 
             # Mark "processing" only after we hold the pipeline slot, so a queued
             # file stays pending (and two pool threads don't both write status
@@ -341,7 +378,7 @@ class BatchWorker(QThread):
             executor.shutdown(wait=True)
 
         # Final cleanup
-        LOGGER.info("Batch processing completed")
+        _log_batch_footer(len(results), len(self._session.failed_files))
 
         # Clean up all temp files
         self._session_manager.cleanup_temp_files(self._session)
