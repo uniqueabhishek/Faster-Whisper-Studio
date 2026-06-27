@@ -6,7 +6,7 @@ import base64
 import ntplib
 import sys
 from datetime import datetime
-from PyQt5.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
@@ -149,4 +149,4 @@ def show_error(title, message):
     app.setWindowTitle(title)
     app.setText(message)
     app.setStandardButtons(QMessageBox.Ok)
-    app.exec_()
+    app.exec()

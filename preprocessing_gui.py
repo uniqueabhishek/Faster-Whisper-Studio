@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import Qt, QSettings, pyqtSignal, QObject
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, QSettings, Signal, QObject
+from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
@@ -40,7 +40,10 @@ from preprocessing_config_dialogs import (
     WAVConfigDialog
 )
 
-from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window
+from ui_common import (
+    MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window,
+    settings_bool, settings_int,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,8 +55,8 @@ class PreprocessingBase(QWidget):
     """Base class for preprocessing functionality (embeddable)."""
 
     # Signals
-    transcription_requested = pyqtSignal(list)  # List[Path]
-    open_separate_window_requested = pyqtSignal()
+    transcription_requested = Signal(list)  # List[Path]
+    open_separate_window_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -386,13 +389,13 @@ class PreprocessingBase(QWidget):
 
     def _load_settings(self) -> None:
         """Load preprocessing settings."""
-        self.convert_check.setChecked(self.settings.value("convert_wav", True, type=bool))
-        self.trim_check.setChecked(self.settings.value("trim_silence", False, type=bool))
-        self.normalize_check.setChecked(self.settings.value("normalize", False, type=bool))
-        self.noise_check.setChecked(self.settings.value("reduce_noise", False, type=bool))
-        self.music_check.setChecked(self.settings.value("remove_music", False, type=bool))
+        self.convert_check.setChecked(settings_bool(self.settings, "convert_wav", True))
+        self.trim_check.setChecked(settings_bool(self.settings, "trim_silence", False))
+        self.normalize_check.setChecked(settings_bool(self.settings, "normalize", False))
+        self.noise_check.setChecked(settings_bool(self.settings, "reduce_noise", False))
+        self.music_check.setChecked(settings_bool(self.settings, "remove_music", False))
 
-        target_db = self.settings.value("target_db", -20, type=int)
+        target_db = settings_int(self.settings, "target_db", -20)
         self.db_slider.setValue(target_db)
 
         output_dir = self.settings.value("output_dir", "")
@@ -460,7 +463,7 @@ class PreprocessingBase(QWidget):
             current_channels=self.wav_config['wav_channels'],
             current_bit_depth=self.wav_config['wav_bit_depth']
         )
-        if dialog.exec_() == 2:  # QDialog.Accepted
+        if dialog.exec() == 2:  # QDialog.Accepted
             self.wav_config.update(dialog.get_values())
             LOGGER.info("WAV conversion config updated: %s", self.wav_config)
 
@@ -472,7 +475,7 @@ class PreprocessingBase(QWidget):
             current_nf=self.noise_config['noise_reduction_nf'],
             current_gs=self.noise_config['noise_reduction_gs']
         )
-        if dialog.exec_() == 2:  # QDialog.Accepted
+        if dialog.exec() == 2:  # QDialog.Accepted
             self.noise_config.update(dialog.get_values())
             LOGGER.info("Noise reduction config updated: %s", self.noise_config)
 
@@ -483,7 +486,7 @@ class PreprocessingBase(QWidget):
             current_highpass=self.music_config['music_highpass_freq'],
             current_lowpass=self.music_config['music_lowpass_freq']
         )
-        if dialog.exec_() == 2:  # QDialog.Accepted
+        if dialog.exec() == 2:  # QDialog.Accepted
             self.music_config.update(dialog.get_values())
             LOGGER.info("Music removal config updated: %s", self.music_config)
 
@@ -495,7 +498,7 @@ class PreprocessingBase(QWidget):
             current_tp=self.normalize_config['normalize_true_peak'],
             current_lra=self.normalize_config['normalize_loudness_range']
         )
-        if dialog.exec_() == 2:  # QDialog.Accepted
+        if dialog.exec() == 2:  # QDialog.Accepted
             self.normalize_config.update(dialog.get_values())
             # Update the slider and label to reflect the new target_db
             self.db_slider.setValue(int(self.normalize_config['normalize_target_db']))
@@ -509,7 +512,7 @@ class PreprocessingBase(QWidget):
             current_speech_pad=self.vad_config['vad_speech_pad_ms'],
             current_threshold=self.vad_config['vad_threshold']
         )
-        if dialog.exec_() == 2:  # QDialog.Accepted
+        if dialog.exec() == 2:  # QDialog.Accepted
             self.vad_config.update(dialog.get_values())
             LOGGER.info("VAD config updated: %s", self.vad_config)
 
@@ -771,7 +774,7 @@ class PreprocessingView(PreprocessingBase):
 class PreprocessingWindow(QMainWindow):
     """Standalone preprocessing window."""
 
-    preprocessing_completed = pyqtSignal(list)  # List[Path]
+    preprocessing_completed = Signal(list)  # List[Path]
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)

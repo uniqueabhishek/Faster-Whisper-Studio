@@ -1,4 +1,4 @@
-"""Shared PyQt5 UI widgets and helpers used across the GUI views.
+"""Shared PySide6 UI widgets and helpers used across the GUI views.
 
 Extracted from gui.py and preprocessing_gui.py, which each previously carried
 byte-identical copies of these widgets (DragDropWidget, QtLogHandler, LogSignal),
@@ -12,10 +12,9 @@ import logging
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QIcon
-from PyQt5.QtWidgets import (
-    QApplication,
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QCursor, QDragEnterEvent, QDropEvent, QGuiApplication, QIcon
+from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QTextEdit,
@@ -69,7 +68,7 @@ def app_icon() -> QIcon:
 
 class LogSignal(QObject):
     """Signal emitter for logging."""
-    log_signal = pyqtSignal(str)
+    log_signal = Signal(str)
 
 
 class QtLogHandler(logging.Handler):
@@ -96,7 +95,7 @@ class QtLogHandler(logging.Handler):
 class DragDropWidget(QFrame):
     """A styled frame that accepts file drops."""
 
-    filesDropped = pyqtSignal(list)
+    filesDropped = Signal(list)
 
     def __init__(self, title: str = "Drag & Drop Files Here"):
         super().__init__()
@@ -155,12 +154,35 @@ class DragDropWidget(QFrame):
             self.filesDropped.emit(paths)
 
 
+def settings_bool(settings, key: str, default: bool) -> bool:
+    """Read a bool from QSettings.
+
+    PySide6's QSettings.value() has no ``type=`` kwarg (unlike PyQt5) and may
+    return the string ``'true'``/``'false'`` depending on the backend, so coerce
+    explicitly.
+    """
+    value = settings.value(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def settings_int(settings, key: str, default: int) -> int:
+    """Read an int from QSettings (PySide6 has no value(type=...))."""
+    value = settings.value(key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def center_window(window: QWidget) -> None:
     """Center a top-level window on the screen under the cursor."""
     frame_gm = window.frameGeometry()
-    desktop = QApplication.desktop()
-    if desktop is not None:
-        screen = desktop.screenNumber(desktop.cursor().pos())  # type: ignore[attr-defined]
-        center_point = desktop.screenGeometry(screen).center()  # type: ignore[attr-defined]
-        frame_gm.moveCenter(center_point)
+    # Qt6 removed QApplication.desktop(); pick the screen under the cursor.
+    screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+    if screen is not None:
+        frame_gm.moveCenter(screen.availableGeometry().center())
         window.move(frame_gm.topLeft())

@@ -1,4 +1,4 @@
-"""PyQt5 GUI for Faster-Whisper transcription app."""
+"""PySide6 GUI for Faster-Whisper transcription app."""
 # pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false
 
 from __future__ import annotations
@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QUrl, QSettings
-from PyQt5.QtGui import QCursor, QDragEnterEvent, QDropEvent, QDesktopServices
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, Signal, QObject, QUrl, QSettings
+from PySide6.QtGui import QCursor, QDragEnterEvent, QDropEvent, QDesktopServices
+from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
@@ -43,7 +43,7 @@ from workers import BatchWorker, ModelLoaderWorker
 from styles import DARK_THEME_QSS, apply_dark_title_bar
 from session_manager import SessionManager, SessionState
 from resume_dialog import ResumeSessionDialog
-from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window
+from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window, settings_bool
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,8 +69,8 @@ LANGUAGE_MAP = {
 class TranscriptionView(QWidget):
     """Transcription view widget (embeddable)."""
 
-    transcription_started = pyqtSignal()
-    transcription_finished = pyqtSignal()
+    transcription_started = Signal()
+    transcription_finished = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None, initial_files: Optional[List[Path]] = None) -> None:
         super().__init__(parent)
@@ -106,7 +106,7 @@ class TranscriptionView(QWidget):
         self._load_settings()
 
         # Check for incomplete sessions AFTER UI is built (lazy init session manager)
-        from PyQt5.QtCore import QTimer
+        from PySide6.QtCore import QTimer
         QTimer.singleShot(500, self._check_for_resume_session)
 
         # Add initial files to queue if provided
@@ -243,7 +243,7 @@ class TranscriptionView(QWidget):
         # Timestamp Checkbox
         self.timestamp_check = QCheckBox("Add Timestamp")
         self.timestamp_check.setToolTip("Checked: Output includes timestamps [MM:SS -> MM:SS].\nUnchecked: Output contains text only.")
-        self.timestamp_check.setChecked(self.settings.value("add_timestamps", False, type=bool))
+        self.timestamp_check.setChecked(settings_bool(self.settings, "add_timestamps", False))
         checks_layout.addWidget(self.timestamp_check)
 
         # Report Checkbox

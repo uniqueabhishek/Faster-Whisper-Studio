@@ -9,14 +9,15 @@ import tempfile
 import traceback
 from logging.handlers import RotatingFileHandler
 
-# Fix for DLL load failed error: onnxruntime must be imported before PyQt5
+# Fix for DLL load failed error: onnxruntime must be imported before the Qt
+# binding (kept from the PyQt5 days as a defensive ordering for PySide6 too).
 try:
-    import onnxruntime  # noqa: F401 pylint: disable=unused-import  # Must be imported before PyQt5
+    import onnxruntime  # noqa: F401 pylint: disable=unused-import  # Must be imported before the Qt binding
 except ImportError:
     pass
 
 # pylint: disable=no-name-in-module
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from main_window import MainWindow
 from ui_common import app_icon
@@ -54,7 +55,7 @@ def exception_hook(exctype, value, tb):
         msg.setWindowTitle("Fatal Error")
         msg.setText(f"An unhandled error occurred:\n\n{str(value)}")
         msg.setDetailedText(error_msg)
-        msg.exec_()
+        msg.exec()
     except Exception:  # pylint: disable=broad-except
         # If the error handler fails (e.g. Qt not initialized), just ignore to prevent recursion
         pass

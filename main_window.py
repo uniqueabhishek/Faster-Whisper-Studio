@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import List
 
-from PyQt5.QtCore import QSettings
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
 from preprocessing_gui import PreprocessingView, PreprocessingWindow
 from gui import TranscriptionView
 from styles import DARK_THEME_QSS, apply_dark_title_bar
-from ui_common import center_window
+from ui_common import center_window, settings_int
 from ffmpeg_dialog import FfmpegDialog
 
 LOGGER = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
 
         # Restore last view
-        last_view = self.settings.value("last_view", 0, type=int)
+        last_view = settings_int(self.settings, "last_view", 0)
         self.stacked_widget.setCurrentIndex(last_view)
         self._update_nav_buttons(last_view)
 
@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
 
     def _open_ffmpeg(self) -> None:
         """Open the FFmpeg dialog (shows version/source + update)."""
-        FfmpegDialog(self).exec_()
+        FfmpegDialog(self).exec()
 
     def _check_app_updates(self) -> None:
         """Placeholder for app self-update (to be wired up later)."""

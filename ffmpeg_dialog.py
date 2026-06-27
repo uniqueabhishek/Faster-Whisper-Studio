@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -34,9 +34,9 @@ _SOURCE_LABELS = {
 class FfmpegUpdateWorker(QThread):
     """Downloads a fresh ffmpeg into the per-user override dir off the GUI thread."""
 
-    succeeded = pyqtSignal(str)   # new version line
-    failed = pyqtSignal(str)
-    status = pyqtSignal(str)
+    succeeded = Signal(str)   # new version line
+    failed = Signal(str)
+    status = Signal(str)
 
     def run(self) -> None:
         try:

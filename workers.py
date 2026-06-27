@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from transcriber import Transcriber, TranscriptionResult
 from session_manager import SessionManager, SessionState
@@ -29,8 +29,8 @@ class ModelLoaderWorker(QThread):
     that load to a background thread and signals the result.
     """
 
-    loaded = pyqtSignal(object)   # Transcriber
-    failed = pyqtSignal(str)      # error message
+    loaded = Signal(object)   # Transcriber
+    failed = Signal(str)      # error message
 
     def __init__(self, config) -> None:
         super().__init__()
@@ -50,11 +50,11 @@ class ModelLoaderWorker(QThread):
 
 
 class BatchWorker(QThread):
-    progress = pyqtSignal(int)                # overall_percent (0-100)
-    speed = pyqtSignal(float, int)            # avg_time, eta_seconds
-    file_status = pyqtSignal(str, str)        # filename, status
-    finished = pyqtSignal(object)             # list of TranscriptionResult
-    failed = pyqtSignal(str)                  # error message
+    progress = Signal(int)                # overall_percent (0-100)
+    speed = Signal(float, int)            # avg_time, eta_seconds
+    file_status = Signal(str, str)        # filename, status
+    finished = Signal(object)             # list of TranscriptionResult
+    failed = Signal(str)                  # error message
 
     def __init__(
         self,

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from audio_processor import PreprocessingConfig, preprocess_audio
 
@@ -17,11 +17,11 @@ class PreprocessingWorker(QThread):
     """Worker thread for preprocessing multiple audio files sequentially."""
 
     # Signals
-    progress = pyqtSignal(int)                    # Overall progress 0-100
-    step_progress = pyqtSignal(str, str, int)     # filename, step_name, step_percent
-    file_status = pyqtSignal(str, str)            # filename, status
-    finished = pyqtSignal(list)                   # List of Path (preprocessed files)
-    failed = pyqtSignal(str)                      # Error message
+    progress = Signal(int)                    # Overall progress 0-100
+    step_progress = Signal(str, str, int)     # filename, step_name, step_percent
+    file_status = Signal(str, str)            # filename, status
+    finished = Signal(list)                   # List of Path (preprocessed files)
+    failed = Signal(str)                      # Error message
 
     def __init__(
         self,

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -160,7 +160,7 @@ class ResumeSessionDialog(QDialog):
             The session if user chose to resume, None if they chose to discard.
         """
         dialog = ResumeSessionDialog(session, parent)
-        dialog.exec_()
+        dialog.exec()
 
         if dialog.resume_requested:
             return session

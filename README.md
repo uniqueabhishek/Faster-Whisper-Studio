@@ -310,7 +310,15 @@ Contributions are welcome! Please follow these guidelines:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This is commercial, proprietary software — **not** MIT-licensed. (The earlier
+"MIT License" statement was incorrect for a closed-source product; replace this
+section with your final license terms.)
+
+The distributed application bundles third-party components under their own
+licenses, notably **Qt for Python (PySide6)** under the **LGPLv3** and **FFmpeg**
+under the **LGPL**. The shipped binaries must retain those components' license
+texts and notices, and Qt/FFmpeg must remain dynamically linked and replaceable
+(do not statically link them) to satisfy the LGPL.
 
 ## Acknowledgments
 
