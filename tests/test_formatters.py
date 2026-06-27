@@ -4,7 +4,8 @@ These guard the fix that replaced the old truncating ``int(seconds)`` formatter
 (which dropped sub-second precision and drifted every timestamp up to ~1s early).
 """
 
-from transcriber import format_timestamp, format_duration, resolve_quality
+from transcriber import (
+    format_timestamp, format_duration, resolve_quality, cpu_compute_type)
 
 
 def test_resolve_quality_depth_mapping():
@@ -20,6 +21,14 @@ def test_resolve_quality_gpu_promotes_int8_to_float16():
     assert resolve_quality("Fast Analysis (int8)", "cuda")["compute_type"] == "float16"
     # float32 paths are unchanged on GPU.
     assert resolve_quality("Deep Analysis (float32)", "cuda")["compute_type"] == "float32"
+
+
+def test_cpu_compute_type_downgrades_gpu_types():
+    # GPU-oriented types become int8 on CPU; CPU-valid types pass through.
+    assert cpu_compute_type("float16") == "int8"
+    assert cpu_compute_type("int8_float16") == "int8"
+    assert cpu_compute_type("float32") == "float32"
+    assert cpu_compute_type("int8") == "int8"
 
 
 def test_format_timestamp_includes_milliseconds():

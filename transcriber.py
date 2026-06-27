@@ -13,7 +13,7 @@ import re
 import shutil
 import wave
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 from collections import namedtuple
@@ -243,6 +243,18 @@ def resolve_quality(depth_label: str, device: str = "cpu") -> dict:
     return {"compute_type": compute_type, "beam_size": beam_size, "patience": patience}
 
 
+def cpu_compute_type(compute_type: str) -> str:
+    """Pick a CPU-valid compute type when falling back from the GPU.
+
+    ``float16`` / ``int8_float16`` are GPU-oriented; CTranslate2 on CPU runs best
+    with ``int8``. ``float32`` and ``int8`` are already valid on CPU and pass
+    through unchanged so the user's chosen precision is preserved where possible.
+    """
+    if compute_type in ("float16", "int8_float16"):
+        return "int8"
+    return compute_type
+
+
 # Lightweight stand-in for faster-whisper's TranscriptionInfo, used when we
 # assemble segments ourselves (the smart-chunking path) and have no real info
 # object from the model. Defined once here rather than re-declared inline.
@@ -255,6 +267,9 @@ class Transcriber:
 
     def __init__(self, config: TranscriptionConfig) -> None:
         self._config = config
+        # Set True if a CUDA load failed and we transparently loaded on CPU,
+        # so the GUI can tell the user they're on the slower path.
+        self.fell_back_to_cpu = False
         self._model: WhisperModel = self._load_model()
 
     def _load_model(self) -> WhisperModel:
@@ -271,20 +286,50 @@ class Transcriber:
                 "Wrong model selected. This file is not a Whisper model."
             )
 
-        LOGGER.info("Loading model: %s (%s)", model_path.name,
-                    self._config.compute_type)
+        device = self._config.device
+        compute_type = self._config.compute_type
+        LOGGER.info("Loading model: %s (%s, %s)",
+                    model_path.name, device, compute_type)
 
         try:
-            return WhisperModel(
-                str(model_path),
-                device=self._config.device,
-                compute_type=self._config.compute_type,
-                cpu_threads=self._config.cpu_threads,
-                num_workers=self._config.num_workers,
-            )
+            return self._build_model(model_path, device, compute_type)
         except Exception as e:
-            LOGGER.error("Failed to load model: %s", str(e))
-            raise
+            # On the GPU path a load failure is almost always CUDA out-of-memory
+            # ("GPU too small for this model"). Fall back to CPU, which is slower
+            # but always has room. A CPU load that fails has nowhere left to go,
+            # so it just propagates to the caller / GUI as before.
+            if device != "cuda":
+                LOGGER.error("Failed to load model: %s", str(e))
+                raise
+
+            cpu_compute = cpu_compute_type(compute_type)
+            LOGGER.warning(
+                "GPU model load failed (%s). Falling back to CPU (%s).",
+                e, cpu_compute)
+            try:
+                model = self._build_model(model_path, "cpu", cpu_compute)
+            except Exception as cpu_e:
+                LOGGER.error("CPU fallback also failed: %s", cpu_e)
+                raise
+
+            # Reflect the device/compute_type that actually loaded so the report
+            # and the GUI's reload check see reality, not the original request.
+            self._config = replace(
+                self._config, device="cpu", compute_type=cpu_compute)
+            self.fell_back_to_cpu = True
+            LOGGER.info("Model loaded on CPU after GPU fallback.")
+            return model
+
+    def _build_model(self, model_path: Path, device: str,
+                     compute_type: str) -> WhisperModel:
+        """Instantiate the CTranslate2 Whisper model on a specific device."""
+        return WhisperModel(
+            str(model_path),
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=self._config.cpu_threads,
+            num_workers=self._config.num_workers,
+        )
 
     def prepare_audio(self, input_path: Path, cancel_check=None) -> Optional[Path]:
         """Converts input to 16kHz mono WAV using ffmpeg to fix duration issues.

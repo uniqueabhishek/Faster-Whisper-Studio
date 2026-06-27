@@ -726,7 +726,13 @@ class TranscriptionView(QWidget):
         self._transcriber = transcriber
         self._model_loader = None
         if self.statusBar():
-            self.statusBar().showMessage("Model loaded. Starting transcription...")
+            if getattr(transcriber, "fell_back_to_cpu", False):
+                # GPU was too small (CUDA OOM); we loaded on CPU instead.
+                message = ("GPU out of memory — running on CPU (slower). "
+                           "Starting transcription...")
+            else:
+                message = "Model loaded. Starting transcription..."
+            self.statusBar().showMessage(message)
         self._start_pending_batch()
 
     def _on_model_load_failed(self, message: str) -> None:
