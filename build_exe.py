@@ -11,33 +11,18 @@ def build():
         print("PyInstaller is not installed. Installing it...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
-    # Define build arguments
-    # --noconsole: Don't show a terminal window
-    # --add-data: Include the assets folder
-    # --name: Name of the executable
-    # --clean: Clean cache
-    # --y: Overwrite output directory
-
-    separator = ";" if os.name == 'nt' else ":"
-
-    icon_path = os.path.join("Resource", "Icon", "faster-whisper-icon.ico")
+    # Build from the single committed spec so this path and the hardened
+    # customer path (build_for_customer.py) stay in sync.
+    spec = "FasterWhisperGUI.spec"
+    if not os.path.exists(spec):
+        print(f"ERROR: {spec} not found. The canonical build spec is required.")
+        return
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--noconsole",
         "--clean",
         "-y",
-        "--name", "FasterWhisperGUI",
-        "--icon", icon_path,
-        "--add-data", f"assets{separator}assets",
-        "--add-data", f"Resource{separator}Resource",
-        "--hidden-import", "soundfile",
-        "--hidden-import", "faster_whisper",
-        "--collect-all", "onnxruntime",
-        "--collect-all", "faster_whisper",
-        "--collect-all", "ctranslate2",
-        "--collect-all", "tokenizers",
-        "app.py"
+        spec,
     ]
 
     print("Building executable with command:")

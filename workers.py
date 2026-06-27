@@ -150,12 +150,6 @@ class BatchWorker(QThread):
                 )
                 return None
 
-            # Update session status to processing
-            self._session_manager.update_file_status(
-                self._session, str(path), "processing"
-            )
-            self.file_status.emit(path.name, "Processing")
-
             def _on_file_progress(file_percent: int):
                 if self._cancel:
                     raise Exception("Cancelled")
@@ -167,6 +161,14 @@ class BatchWorker(QThread):
             # Acquire semaphore to control pipeline - only 1 file can be preprocessing+transcribing at once
             # This prevents both workers from preprocessing files in parallel at startup
             self._pipeline_semaphore.acquire()
+
+            # Mark "processing" only after we hold the pipeline slot, so a queued
+            # file stays pending (and two pool threads don't both write status
+            # before the work actually starts).
+            self._session_manager.update_file_status(
+                self._session, str(path), "processing"
+            )
+            self.file_status.emit(path.name, "Processing")
 
             temp_wav = None
             try:

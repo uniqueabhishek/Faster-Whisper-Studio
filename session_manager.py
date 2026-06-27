@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+import threading
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
@@ -86,11 +89,14 @@ class SessionManager:
                         Defaults to user's temp directory.
         """
         if session_dir is None:
-            import tempfile
             session_dir = Path(tempfile.gettempdir()) / "faster_whisper_sessions"
 
         self.session_dir = Path(session_dir)
         self.session_dir.mkdir(parents=True, exist_ok=True)
+
+        # Guards in-memory session mutation + the (atomic) write so concurrent
+        # worker threads can't interleave a read-modify-write or tear the file.
+        self._lock = threading.RLock()
 
         LOGGER.info("Session manager initialized: %s", self.session_dir)
 
@@ -139,17 +145,34 @@ class SessionManager:
         return state
 
     def save_session(self, state: SessionState) -> None:
-        """Save session state to disk."""
+        """Save session state to disk atomically.
+
+        Serializes under the instance lock and writes to a temp file in the same
+        directory, then ``os.replace()``s it into place. A concurrent save from
+        another worker thread can therefore never observe (or leave behind) a
+        half-written/truncated JSON file, which previously silently destroyed
+        the session and defeated resume.
+        """
         session_file = self.session_dir / f"{state.session_id}.json"
 
-        try:
-            data = asdict(state)
-            with open(session_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-
-            LOGGER.debug("Session saved: %s", session_file)
-        except Exception as e:
-            LOGGER.error("Failed to save session %s: %s", state.session_id, e)
+        with self._lock:
+            try:
+                data = asdict(state)
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(self.session_dir), suffix=".tmp")
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp_name, session_file)  # atomic on same filesystem
+                except Exception:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
+                LOGGER.debug("Session saved: %s", session_file)
+            except Exception as e:
+                LOGGER.error("Failed to save session %s: %s", state.session_id, e)
 
     def load_session(self, session_id: str) -> Optional[SessionState]:
         """Load session state from disk."""
@@ -246,53 +269,54 @@ class SessionManager:
         output_path: Optional[str] = None,
     ) -> None:
         """Update status of a file in the session."""
-        for file_status in state.files:
-            if file_status.path == file_path:
-                old_status = file_status.status
-                file_status.status = status
-                file_status.error = error
-                file_status.output_path = output_path
+        with self._lock:
+            for file_status in state.files:
+                if file_status.path == file_path:
+                    old_status = file_status.status
+                    file_status.status = status
+                    file_status.error = error
+                    file_status.output_path = output_path
 
-                now = datetime.now().isoformat()
-                if status == "processing" and old_status == "pending":
-                    file_status.started_at = now
-                elif status in ("completed", "failed"):
-                    file_status.completed_at = now
+                    now = datetime.now().isoformat()
+                    if status == "processing" and old_status == "pending":
+                        file_status.started_at = now
+                    elif status in ("completed", "failed"):
+                        file_status.completed_at = now
 
-                self.save_session(state)
-                LOGGER.debug("Updated %s: %s -> %s",
-                           Path(file_path).name, old_status, status)
-                break
+                    self.save_session(state)
+                    LOGGER.debug("Updated %s: %s -> %s",
+                                 Path(file_path).name, old_status, status)
+                    break
 
     def add_temp_file(self, state: SessionState, temp_path: Path) -> None:
         """Track a temporary file for cleanup."""
         temp_str = str(temp_path)
-        if temp_str not in state.temp_files:
-            state.temp_files.append(temp_str)
-            self.save_session(state)
-            LOGGER.debug("Tracked temp file: %s", temp_path.name)
+        with self._lock:
+            if temp_str not in state.temp_files:
+                state.temp_files.append(temp_str)
+                self.save_session(state)
+                LOGGER.debug("Tracked temp file: %s", temp_path.name)
 
     def cleanup_temp_files(self, state: SessionState) -> None:
         """Clean up all tracked temporary files."""
-        import os
-
         cleaned = 0
-        for temp_path_str in state.temp_files[:]:  # Copy list
-            temp_path = Path(temp_path_str)
-            try:
-                if temp_path.exists():
-                    os.unlink(temp_path)
-                    cleaned += 1
-                    LOGGER.debug("Deleted temp file: %s", temp_path.name)
+        with self._lock:
+            for temp_path_str in state.temp_files[:]:  # Copy list
+                temp_path = Path(temp_path_str)
+                try:
+                    if temp_path.exists():
+                        os.unlink(temp_path)
+                        cleaned += 1
+                        LOGGER.debug("Deleted temp file: %s", temp_path.name)
 
-                # Remove from tracking list
-                state.temp_files.remove(temp_path_str)
-            except Exception as e:
-                LOGGER.warning("Failed to delete temp file %s: %s", temp_path, e)
+                    # Remove from tracking list
+                    state.temp_files.remove(temp_path_str)
+                except Exception as e:
+                    LOGGER.warning("Failed to delete temp file %s: %s", temp_path, e)
 
-        if cleaned > 0:
-            self.save_session(state)
-            LOGGER.info("Cleaned up %d temp files", cleaned)
+            if cleaned > 0:
+                self.save_session(state)
+                LOGGER.info("Cleaned up %d temp files", cleaned)
 
     def cleanup_orphaned_files(self) -> int:
         """Find and delete orphaned temp files from old sessions.

@@ -23,6 +23,8 @@ env/
 build/
 dist/
 *.spec
+# Keep the one canonical, committed build spec (negation must be on its own line):
+!FasterWhisperGUI.spec
 
 # Environment variables
 .env

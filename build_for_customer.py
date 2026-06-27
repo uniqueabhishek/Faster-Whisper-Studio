@@ -1,130 +1,99 @@
+"""Build a hardened, PyArmor-obfuscated customer executable.
+
+Unlike the previous version (which injected a customer HWID into an UNSIGNED
+string-compare template whose HWID formula could never match get_hwid.py), this
+obfuscates the REAL signed license_guard.py (Ed25519 verifier) before packaging,
+then builds from the single committed FasterWhisperGUI.spec — so the obfuscated
+build is identical to a normal build except the license check is hardened.
+
+The customer still receives their machine-locked, signed license.dat (generate
+it with admin_keygen.py) and ships it next to the exe.
+
+Safety: obfuscation is staged into an isolated build dir, and the original
+plaintext license_guard.py is ALWAYS restored via try/finally, so an interrupted
+or failed build can never leave obfuscated source or a stray pyarmor_runtime in
+your working tree (which a later `git add .` could otherwise commit).
+"""
+
 import os
 import shutil
 import subprocess
+import sys
 
-TEMPLATE_FILE = "license_guard_hardcoded.tpl"
-OUTPUT_FILE = "license_guard.py"
-MAIN_SCRIPT = "app.py"  # Your main entry point
+GUARD_FILE = "license_guard.py"
+SPEC_FILE = "FasterWhisperGUI.spec"
+OBF_DIR = os.path.join("build", "pyarmor_obf")
+
+
+def _run(cmd):
+    print("  $", " ".join(cmd))
+    subprocess.check_call(cmd)
 
 
 def main():
-    print("\n--- SECURE BUILDER FOR CUSTOMER (PyArmor + PyInstaller) ---")
-    print("This tool creates a HARDENED, NODE-LOCKED executable.")
+    print("\n--- HARDENED CUSTOMER BUILD (PyArmor + PyInstaller) ---")
 
-    # 1. Get Target ID
-    target_id = input(
-        "\nEnter Customer's Machine ID (from get_hwid.py): ").strip()
-    if not target_id:
-        print("Error: ID cannot be empty.")
-        return
-
-    # 2. Inject ID into license_guard.py
-    print(f"\n[1/4] Injecting ID ({target_id}) into code...")
-
-    if not os.path.exists(TEMPLATE_FILE):
-        print(f"Error: Missing template {TEMPLATE_FILE}")
-        return
-
-    global_setup_complete = False
-
-    # Backup existing if present (to be safe)
-    if os.path.exists(OUTPUT_FILE):
-        shutil.copy(OUTPUT_FILE, f"{OUTPUT_FILE}.bak")
-
-    with open(TEMPLATE_FILE, "r") as f:
-        template = f.read()
-
-    # Write the PLAIN TEXT version first (needed as input for PyArmor)
-    final_code = template.replace("{{TARGET_HWID}}", target_id)
-    with open(OUTPUT_FILE, "w") as f:
-        f.write(final_code)
-
-    # 3. Obfuscate with PyArmor
-    print(f"\n[2/4] Obfuscating security module with PyArmor...")
     if shutil.which("pyarmor") is None:
-        print("Error: PyArmor not found. Run 'pip install pyarmor'")
-        print("Falling back to standard compilation (NOT SECURE)...")
-    else:
-        try:
-            # Clean previous build
-            if os.path.exists("dist/obf"):
-                shutil.rmtree("dist/obf", ignore_errors=True)
+        print("ERROR: PyArmor not found (pip install pyarmor).")
+        print("Refusing to produce an UN-obfuscated 'hardened' build.")
+        return 1
+    if not os.path.exists(GUARD_FILE):
+        print(f"ERROR: {GUARD_FILE} not found. Run this from the project root.")
+        return 1
+    if not os.path.exists(SPEC_FILE):
+        print(f"ERROR: {SPEC_FILE} not found. The committed build spec is required.")
+        return 1
 
-            # Run PyArmor
-            # We obfuscate license_guard.py in place (or swap it)
-            # Strategy: Gen to 'dist/obf', then copy BACK to current dir to let PyInstaller find it easily
-            # (We will restore from .bak later)
+    # Keep the real plaintext source so we can always restore it.
+    with open(GUARD_FILE, "r", encoding="utf-8") as f:
+        original_guard = f.read()
 
-            subprocess.check_call(
-                ["pyarmor", "gen", "-O", "dist/obf", OUTPUT_FILE])
-
-            # Verify obfuscation happened
-            if os.path.exists(f"dist/obf/{OUTPUT_FILE}"):
-                print("      Obfuscation successful. Swapping files for build...")
-                # Copy the OBFUSCATED file over the real one
-                shutil.copy(f"dist/obf/{OUTPUT_FILE}", OUTPUT_FILE)
-
-                # Copy the pyarmor_runtime (required for it to run)
-                # usage: pyarmor 8 generates a folder 'pyarmor_runtime_xxxx'
-                # We need to ensure PyInstaller picks this up.
-                # The easiest way is to leave it in the root for PyInstaller to find.
-                for item in os.listdir("dist/obf"):
-                    if item.startswith("pyarmor_runtime"):
-                        if os.path.exists(item):
-                            shutil.rmtree(item)
-                        shutil.copytree(f"dist/obf/{item}", item)
-            else:
-                print("Warning: PyArmor output not found. Using plain text.")
-
-        except Exception as e:
-            print(f"Error during obfuscation: {e}")
-            print("Proceeding with plain text (Insecure)...")
-
-    # 4. Compile with PyInstaller
-    print("\n[3/4] Compiling with PyInstaller...")
-
-    exe_name = f"FasterWhisper_Locked_{target_id[:6]}"
-
-    # Note: --clean is important.
-    # We add --hidden-import if needed, but usually PyInstaller finds the runtime if it's in the root
-    cmd = [
-        "pyinstaller",
-        "--noconsole",
-        "--onefile",
-        "--name", exe_name,
-        "--clean",
-        MAIN_SCRIPT
-    ]
-
-    print(f"      Running: {' '.join(cmd)}")
+    staged_runtime_dirs = []
     try:
-        subprocess.check_call(cmd)
-    except subprocess.CalledProcessError as e:
-        print(f"Error during compilation: {e}")
-        # Restore before exit
-        if os.path.exists(f"{OUTPUT_FILE}.bak"):
-            shutil.copy(f"{OUTPUT_FILE}.bak", OUTPUT_FILE)
-        return
+        # 1. Obfuscate the REAL signed license_guard.py into an isolated dir.
+        print("\n[1/3] Obfuscating license_guard.py with PyArmor...")
+        if os.path.exists(OBF_DIR):
+            shutil.rmtree(OBF_DIR, ignore_errors=True)
+        os.makedirs(OBF_DIR, exist_ok=True)
+        _run(["pyarmor", "gen", "-O", OBF_DIR, GUARD_FILE])
 
-    # 5. Cleanup / Restore
-    print("\n[4/4] Cleaning up...")
+        obf_guard = os.path.join(OBF_DIR, GUARD_FILE)
+        if not os.path.exists(obf_guard):
+            print("ERROR: PyArmor produced no obfuscated license_guard.py. Aborting.")
+            return 1
 
-    # Restore the original plain text file (or the template-based one)
-    # actually we should restore the one we backed up, or just delete the temp one
-    if os.path.exists(f"{OUTPUT_FILE}.bak"):
-        shutil.copy(f"{OUTPUT_FILE}.bak", OUTPUT_FILE)
-        os.remove(f"{OUTPUT_FILE}.bak")
-        print("      Restored original source code.")
+        # Swap the obfuscated module in for the build and stage the pyarmor
+        # runtime next to it so PyInstaller's import analysis collects it.
+        shutil.copy(obf_guard, GUARD_FILE)
+        for item in os.listdir(OBF_DIR):
+            if item.startswith("pyarmor_runtime"):
+                dest = item
+                if os.path.exists(dest):
+                    shutil.rmtree(dest)
+                shutil.copytree(os.path.join(OBF_DIR, item), dest)
+                staged_runtime_dirs.append(dest)
 
-    # Remove runtime from root (keep it clean)
-    for item in os.listdir("."):
-        if item.startswith("pyarmor_runtime"):
-            shutil.rmtree(item)
+        # 2. Build from the single committed spec (same config as a normal build).
+        print("\n[2/3] Building with PyInstaller (committed spec)...")
+        _run([sys.executable, "-m", "PyInstaller", "--clean", "-y", SPEC_FILE])
 
-    print("\n[SUCCESS] Build Complete!")
-    print(f"      Secure EXE: dist\\{exe_name}.exe")
-    print(f"      Send ONLY this file to the customer.")
+        print("\n[3/3] Build complete.")
+        print(r"  Hardened exe: dist\FasterWhisperGUI\FasterWhisperGUI.exe")
+        print("  Generate the customer's signed license.dat with admin_keygen.py")
+        print("  and ship it alongside the exe.")
+        return 0
+    except subprocess.CalledProcessError as exc:
+        print(f"ERROR: build step failed: {exc}")
+        return 1
+    finally:
+        # ALWAYS restore the plaintext source and remove staged runtime dirs so
+        # the working tree is never left obfuscated/dirty.
+        with open(GUARD_FILE, "w", encoding="utf-8") as f:
+            f.write(original_guard)
+        for d in staged_runtime_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+        print("  Restored original license_guard.py.")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

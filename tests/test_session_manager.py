@@ -1,5 +1,7 @@
 """Tests for SessionState/SessionManager persistence and status transitions."""
 
+import threading
+
 from session_manager import SessionManager
 
 
@@ -82,3 +84,29 @@ def test_delete_session(tmp_path):
     assert mgr.load_session(state.session_id) is not None
     mgr.delete_session(state.session_id)
     assert mgr.load_session(state.session_id) is None
+
+
+def test_concurrent_updates_never_corrupt_the_file(tmp_path):
+    # Regression: concurrent json.dump from multiple worker threads previously
+    # produced a torn/truncated session file that load_session silently dropped
+    # (returning None), defeating resume. The atomic write + lock must keep the
+    # on-disk file valid and reflect every update.
+    mgr = _mgr(tmp_path)
+    n = 24
+    files = [tmp_path / f"f{i}.mp3" for i in range(n)]
+    state = mgr.create_session(input_files=files, model_path="m")
+
+    def worker(i):
+        mgr.update_file_status(
+            state, str(files[i]), "completed", output_path=f"out{i}.txt")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    loaded = mgr.load_session(state.session_id)
+    assert loaded is not None, "session file was torn/corrupt (load returned None)"
+    assert len(loaded.completed_files) == n
+    assert state.is_complete
