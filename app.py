@@ -145,9 +145,11 @@ def main() -> None:
             sys.exit(1)
         # --- LICENSE CHECK END ---
 
-        # Show main window with sidebar navigation
+        # Show main window with sidebar navigation, maximized to fill the screen.
+        # The resize/center in MainWindow.__init__ remains the restore geometry,
+        # so un-maximizing returns to a sensible centered size.
         window = MainWindow()
-        window.show()
+        window.showMaximized()
 
         sys.exit(app.exec())
     except Exception:  # pylint: disable=broad-except
