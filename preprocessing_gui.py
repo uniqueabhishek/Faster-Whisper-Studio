@@ -40,108 +40,12 @@ from preprocessing_config_dialogs import (
     WAVConfigDialog
 )
 
-# Import DragDropWidget and other utilities from gui
-# We'll need to import from gui after modifying it
-# For now, let's create a simple version here
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent
-from PyQt5.QtWidgets import QFrame
+from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window
 
 LOGGER = logging.getLogger(__name__)
 
-MEDIA_FILTER = (
-    "Media Files (*.mp3 *.wav *.m4a *.flac *.ogg *.mp4 *.mkv *.webm);;"
-    "All Files (*)"
-)
 DEFAULT_WIDTH = 900
 DEFAULT_HEIGHT = 700
-
-
-class LogSignal(QObject):
-    """Signal emitter for logging."""
-    log_signal = pyqtSignal(str)
-
-
-class QtLogHandler(logging.Handler):
-    """Custom logging handler that emits signals to a QTextEdit."""
-
-    def __init__(self, text_widget: QTextEdit):
-        super().__init__()
-        self.text_widget = text_widget
-        self.emitter = LogSignal()
-        self.emitter.log_signal.connect(self._append_text)
-        self.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%H:%M:%S"))
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.emitter.log_signal.emit(msg)
-
-    def _append_text(self, msg: str):
-        self.text_widget.append(msg)
-        self.text_widget.verticalScrollBar().setValue(  # type: ignore[union-attr]
-            self.text_widget.verticalScrollBar().maximum()  # type: ignore[union-attr]
-        )
-
-
-class DragDropWidget(QFrame):
-    """A styled frame that accepts file drops."""
-
-    filesDropped = pyqtSignal(list)
-
-    def __init__(self, title: str = "Drag & Drop Files Here"):
-        super().__init__()
-        self.setAcceptDrops(True)
-        self.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-            QFrame:hover {
-                border-color: #3b82f6;
-                background-color: #2d2d2d;
-            }
-        """)
-
-        layout = QVBoxLayout(self)
-        self.label = QLabel(title)
-        self.label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
-        self.label.setStyleSheet("color: #9ca3af; font-weight: bold;")
-        layout.addWidget(self.label)
-
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():  # type: ignore[union-attr]
-            event.accept()
-            self.setStyleSheet("""
-                QFrame {
-                    border: 2px dashed #3b82f6;
-                    background-color: #333333;
-                }
-            """)
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-        """)
-
-    def dropEvent(self, event: QDropEvent):
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-        """)
-        urls = event.mimeData().urls()  # type: ignore[union-attr]
-        if urls:
-            paths = [u.toLocalFile() for u in urls]
-            self.filesDropped.emit(paths)
 
 
 class PreprocessingBase(QWidget):
@@ -910,13 +814,7 @@ class PreprocessingWindow(QMainWindow):
 
     def _center_window(self) -> None:
         """Centers the window on the screen."""
-        frame_gm = self.frameGeometry()
-        desktop = QApplication.desktop()
-        if desktop:
-            screen = desktop.screenNumber(desktop.cursor().pos())  # type: ignore[attr-defined]
-            center_point = desktop.screenGeometry(screen).center()  # type: ignore[attr-defined]
-            frame_gm.moveCenter(center_point)
-            self.move(frame_gm.topLeft())
+        center_window(self)
 
     def _on_transcription_requested(self, files: List[Path]) -> None:
         """Handle transcription request from embedded view."""

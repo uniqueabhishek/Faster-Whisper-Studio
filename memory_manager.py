@@ -73,48 +73,6 @@ class MemoryManager:
         MemoryManager.log_memory_usage("After cleanup:")
 
     @staticmethod
-    def clear_model_cache(transcriber) -> None:
-        """Clear model cache and free GPU/CPU memory.
-
-        Args:
-            transcriber: Transcriber instance to clear cache from.
-        """
-        try:
-            if transcriber is None:
-                return
-
-            # Check if model exists
-            if not hasattr(transcriber, '_model') or transcriber._model is None:  # pylint: disable=protected-access
-                return
-
-            LOGGER.info("Clearing model cache...")
-
-            # For faster-whisper models, we can't directly unload
-            # but we can try to clear any cached segments
-            model = transcriber._model  # pylint: disable=protected-access
-
-            # Clear any cached data in the model
-            if hasattr(model, 'feature_extractor'):
-                # Feature extractor may have cached mel spectrograms
-                del model.feature_extractor
-                model.feature_extractor = None
-
-            # If using GPU, clear CUDA cache
-            try:
-                import torch  # pylint: disable=import-outside-toplevel
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    LOGGER.info("Cleared CUDA cache")
-            except ImportError:
-                pass  # PyTorch not available
-
-            # Force garbage collection
-            MemoryManager.cleanup_memory(aggressive=True)
-
-        except Exception as e:  # pylint: disable=broad-except
-            LOGGER.warning("Failed to clear model cache: %s", e)
-
-    @staticmethod
     def check_memory_available(required_mb: float = 1000) -> bool:
         """Check if sufficient memory is available.
 
@@ -141,48 +99,6 @@ class MemoryManager:
             return True  # Assume OK if check fails
 
     @staticmethod
-    def estimate_memory_needed(
-        audio_duration_seconds: float,
-        compute_type: str = "float32",
-        beam_size: int = 5,
-    ) -> float:
-        """Estimate memory needed for transcription.
-
-        Args:
-            audio_duration_seconds: Duration of audio in seconds.
-            compute_type: Model precision (int8, float16, float32).
-            beam_size: Beam size for decoding.
-
-        Returns:
-            Estimated memory in MB.
-        """
-        # Base memory for model (approximate)
-        model_memory = {
-            "int8": 200,
-            "float16": 400,
-            "float32": 800,
-        }.get(compute_type, 800)
-
-        # Audio processing memory (approx 1 MB per minute)
-        audio_memory = (audio_duration_seconds / 60) * 1
-
-        # Beam search memory (scales with beam size)
-        beam_memory = beam_size * 50
-
-        # Add 50% buffer
-        total = (model_memory + audio_memory + beam_memory) * 1.5
-
-        LOGGER.debug(
-            "Estimated memory: %.0f MB (model: %.0f, audio: %.0f, beam: %.0f)",
-            total,
-            model_memory,
-            audio_memory,
-            beam_memory,
-        )
-
-        return total
-
-    @staticmethod
     def cleanup_between_files() -> None:
         """Lightweight cleanup between individual file transcriptions."""
         # Run lightweight GC
@@ -196,17 +112,12 @@ class MemoryManager:
         # Log memory before cleanup
         MemoryManager.log_memory_usage("Before cleanup:")
 
-        # Aggressive garbage collection
+        # Aggressive garbage collection. Note: the dominant transcription
+        # footprint is CTranslate2's own C++ allocator, which Python-level GC
+        # (and torch.cuda.empty_cache, removed here as it freed nothing of the
+        # CT2 footprint) cannot reclaim; the only real lever is releasing the
+        # model itself, handled on reload in the GUI.
         MemoryManager.cleanup_memory(aggressive=True)
-
-        # Clear CUDA cache if available
-        try:
-            import torch  # pylint: disable=import-outside-toplevel
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                LOGGER.info("Cleared CUDA cache")
-        except ImportError:
-            pass
 
         # Log memory after cleanup
         MemoryManager.log_memory_usage("After cleanup:")

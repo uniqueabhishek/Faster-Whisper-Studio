@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import os
+import math
 import time
 import logging
 import subprocess
@@ -168,6 +169,48 @@ AUDIO_VIDEO_EXTS: tuple[str, ...] = (
 )
 
 
+def format_timestamp(seconds: float) -> str:
+    """Format an absolute position as ``HH:MM:SS.mmm`` (``MM:SS.mmm`` under 1h).
+
+    Rounds to the nearest millisecond. The previous implementation truncated to
+    whole seconds (``int(seconds)``), so every emitted timestamp drifted up to
+    ~1s early and lost all sub-second precision. Used for the per-segment
+    ``[start -> end]`` markers in the transcript.
+    """
+    if seconds is None or not math.isfinite(seconds) or seconds < 0:  # None / NaN / inf / negative
+        seconds = 0.0
+    total_ms = int(round(seconds * 1000))
+    hours, rem = divmod(total_ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    secs, millis = divmod(rem, 1000)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+    return f"{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def format_duration(seconds: float) -> str:
+    """Format an elapsed duration as ``HH:MM:SS``, rounded to the nearest second.
+
+    Used for the human-readable report fields (total/processed/processing time)
+    where millisecond precision would only add noise.
+    """
+    if seconds is None or not math.isfinite(seconds) or seconds < 0:  # None / NaN / inf / negative
+        seconds = 0.0
+    total_secs = int(round(seconds))
+    hours, rem = divmod(total_secs, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+# Lightweight stand-in for faster-whisper's TranscriptionInfo, used when we
+# assemble segments ourselves (the smart-chunking path) and have no real info
+# object from the model. Defined once here rather than re-declared inline.
+_TranscriptionInfo = namedtuple(
+    "TranscriptionInfo", ["duration", "language", "language_probability"])
+
+
 class Transcriber:
     """High-level wrapper around Faster-Whisper."""
 
@@ -292,8 +335,15 @@ class Transcriber:
             LOGGER.error("Audio repair failed: %s", str(e))
             return None
 
-    def _slice_audio(self, input_path: Path, start: float, duration: float) -> Optional[Path]:
-        """Extract a slice of audio to a temporary WAV file."""
+    def _slice_audio(self, input_path: Path, start: float, duration: float,
+                     cancel_check: Optional[Callable[[], bool]] = None) -> Optional[Path]:
+        """Extract a slice of audio to a temporary WAV file.
+
+        ``cancel_check``: optional callable returning True to abort. When it
+        fires, the ffmpeg process is killed and ``Exception("Cancelled")`` is
+        raised so the chunked transcription unwinds promptly instead of blocking
+        for the full slice.
+        """
         temp_path = None
         try:
             fd, temp_path = tempfile.mkstemp(suffix=".wav")
@@ -312,21 +362,42 @@ class Transcriber:
                 str(temp_path)
             ]
 
-            subprocess.run(
+            # Use Popen + polling so a cancel request can kill ffmpeg mid-slice.
+            process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-                check=True
             )
+
+            while True:
+                if cancel_check and cancel_check():
+                    process.kill()
+                    raise Exception("Cancelled")
+                if process.poll() is not None:
+                    break
+                time.sleep(0.1)
+
+            if process.returncode != 0:
+                LOGGER.error(
+                    "Failed to slice audio: ffmpeg returned %d", process.returncode)
+                if temp_path and temp_path.exists():
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                return None
+
             return temp_path
         except Exception as e:  # pylint: disable=broad-except
-            LOGGER.error("Failed to slice audio: %s", e)
             if temp_path and temp_path.exists():
                 try:
                     os.unlink(temp_path)
                 except OSError:
                     pass
+            if str(e) == "Cancelled":
+                raise
+            LOGGER.error("Failed to slice audio: %s", e)
             return None
 
     def _find_nearest_silence(self, input_path: Path, start_search: float, search_window: float = 600.0) -> float:
@@ -429,8 +500,13 @@ class Transcriber:
     MIN_CHUNK_DURATION = 600   # 10 minutes
     MAX_CHUNK_DURATION = 1200  # 20 minutes
 
-    def _transcribe_chunked(self, input_path: Path, total_duration: float, transcribe_kwargs: dict):
-        """Generator that yields segments by processing audio in chunks (safe for low memory)."""
+    def _transcribe_chunked(self, input_path: Path, total_duration: float, transcribe_kwargs: dict,
+                            cancel_check: Optional[Callable[[], bool]] = None):
+        """Generator that yields segments by processing audio in chunks (safe for low memory).
+
+        ``cancel_check``: optional callable returning True to abort between
+        chunks and during the (now killable) per-chunk slice.
+        """
 
         # Remove chunk_length to prevent nested chunking issues
         chunk_kwargs = transcribe_kwargs.copy()
@@ -440,6 +516,9 @@ class Transcriber:
         current_time = 0.0
 
         while current_time < total_duration:
+            if cancel_check and cancel_check():
+                raise Exception("Cancelled")
+
             # We want a chunk between 10 and 20 minutes.
             # So we search for silence between [current+10m, current+20m]
 
@@ -474,11 +553,14 @@ class Transcriber:
                 "Processing chunk: %.1f - %.1f (Duration: %.1f)", current_time, split_point, chunk_duration)
 
             temp_chunk = self._slice_audio(
-                input_path, current_time, chunk_duration)
+                input_path, current_time, chunk_duration, cancel_check=cancel_check)
             if not temp_chunk:
-                LOGGER.error(
-                    "Failed to create audio slice. Aborting chunked transcription.")
-                break
+                # A failed slice would otherwise silently truncate the transcript
+                # while the caller still marks the file "completed". Fail loudly
+                # so the file is recorded as failed instead of partially-done.
+                raise RuntimeError(
+                    f"Failed to create audio slice at {current_time:.1f}s. "
+                    "Aborting chunked transcription to avoid silent truncation.")
 
             try:
                 segments, _ = self._model.transcribe(
@@ -527,6 +609,220 @@ class Transcriber:
 
             current_time = split_point
 
+    def _probe_duration(self, audio_path: Path) -> float:
+        """Return audio duration in seconds via the WAV header, or 0.0 if unknown."""
+        try:
+            with wave.open(str(audio_path), "rb") as wf:
+                return wf.getnframes() / wf.getframerate()
+        except Exception as e:  # pylint: disable=broad-except
+            LOGGER.warning("Could not determine audio duration: %s", e)
+            return 0.0
+
+    def _resolve_strategy(self, actual_input: Path) -> tuple[float, bool, Optional[int]]:
+        """Decide the processing strategy for the input.
+
+        Returns ``(full_duration_seconds, use_smart_chunking, chunk_length)``.
+        Files longer than 40 minutes use smart (physical) chunking to bound
+        memory. A user-configured ``chunk_length`` disables auto-detection.
+        """
+        if self._config.chunk_length is not None:
+            chunk_length = self._config.chunk_length
+            if chunk_length:
+                LOGGER.info("Using custom internal chunk length: %ds", chunk_length)
+            return 0.0, False, chunk_length
+
+        full_duration = self._probe_duration(actual_input)
+        if full_duration <= 0.0:
+            LOGGER.warning("Proceeding with standard processing (unknown duration).")
+            return 0.0, False, None
+
+        duration_minutes = full_duration / 60
+        LOGGER.info("Audio duration: %.1f minutes", duration_minutes)
+        if duration_minutes > 40:
+            LOGGER.info(
+                "Long audio detected (%.1f min). Using Smart Chunking (physical "
+                "splitting) to prevent memory errors.", duration_minutes)
+            return full_duration, True, None
+
+        LOGGER.info("Normal duration file (%.1f min). Standard processing.",
+                    duration_minutes)
+        return full_duration, False, None
+
+    def _build_transcribe_kwargs(self, lang, bs, vad_filter, initial_prompt,
+                                 task, patience, chunk_length) -> dict:
+        """Assemble the keyword arguments passed to ``WhisperModel.transcribe``."""
+        vad_params = dict(
+            min_silence_duration_ms=3000,
+            speech_pad_ms=1000,
+            threshold=0.1,
+        ) if vad_filter else None
+
+        kwargs = dict(
+            language=lang,
+            beam_size=bs,
+            best_of=self._config.best_of,
+            vad_filter=vad_filter,
+            vad_parameters=vad_params,
+            initial_prompt=initial_prompt,
+            condition_on_previous_text=False,
+            task=task,
+            patience=patience,
+        )
+        # Only add chunk_length if it's set (for standard processing).
+        if chunk_length is not None:
+            kwargs['chunk_length'] = chunk_length
+        return kwargs
+
+    def _run_transcription(self, actual_input, transcribe_kwargs, use_smart_chunking,
+                           full_duration, lang, bs, vad_filter, initial_prompt,
+                           task, patience, cancel_check):
+        """Run the model (or smart-chunked generator) with memory/VAD fallbacks.
+
+        Returns ``(segments, info)``. On a memory error during standard
+        processing, retries via smart chunking; on a VAD load error, retries
+        with VAD disabled (preserving the task/patience the primary call used).
+        """
+        try:
+            if use_smart_chunking:
+                segments = self._transcribe_chunked(
+                    actual_input, full_duration, transcribe_kwargs,
+                    cancel_check=cancel_check)
+                info = _TranscriptionInfo(
+                    duration=full_duration,
+                    language=lang if lang else "unknown",
+                    language_probability=1.0)
+                return segments, info
+
+            return self._model.transcribe(
+                str(actual_input),
+                **transcribe_kwargs  # type: ignore[arg-type]
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            error_str = str(e)
+            is_memory_error = (
+                "MemoryError" in error_str or "Unable to allocate" in error_str
+                or isinstance(e, MemoryError) or "ArrayMemoryError" in error_str)
+
+            if is_memory_error and not use_smart_chunking:
+                LOGGER.warning(
+                    "Memory Error detected during standard processing (%s). "
+                    "Switching to safer Smart Chunking.", error_str)
+
+                # We need duration if we didn't get it before.
+                if full_duration == 0.0:
+                    full_duration = self._probe_duration(actual_input)
+                    if full_duration <= 0.0:
+                        LOGGER.error(
+                            "Could not determine duration for chunking fallback.")
+                        raise
+
+                segments = self._transcribe_chunked(
+                    actual_input, full_duration, transcribe_kwargs,
+                    cancel_check=cancel_check)
+                info = _TranscriptionInfo(
+                    duration=full_duration,
+                    language=lang if lang else "unknown",
+                    language_probability=1.0)
+                return segments, info
+
+            # Fallback for VAD load errors: retry with VAD disabled. (Smart
+            # chunking calls _model.transcribe internally, so its VAD errors
+            # bubble up here too.)
+            if vad_filter and ("ONNXRuntimeError" in error_str or "INVALID_PROTOBUF" in error_str):
+                LOGGER.warning("VAD failed to load (%s). Retrying with VAD disabled.", e)
+                return self._model.transcribe(
+                    str(actual_input),
+                    language=lang,
+                    beam_size=bs,
+                    best_of=self._config.best_of,
+                    vad_filter=False,
+                    initial_prompt=initial_prompt,
+                    task=task,
+                    patience=patience,
+                )
+
+            raise
+
+    def _render_segments(self, segments, total_duration, add_timestamps,
+                         progress_callback, cancel_check) -> tuple[List[str], float]:
+        """Iterate model segments into transcript lines, honoring cancellation.
+
+        Returns ``(lines, ai_processed_duration)``.
+        """
+        lines: List[str] = []
+        ai_processed_duration = 0.0
+        last_progress = -1
+        last_log_time = time.time()
+
+        for segment in segments:
+            # Honor cancellation between segments. faster-whisper streams
+            # segments lazily, so this is observed within one segment (seconds),
+            # making a long single file genuinely interruptible.
+            if cancel_check and cancel_check():
+                raise Exception("Cancelled")
+
+            # Log progress every 60 seconds.
+            if time.time() - last_log_time >= 60.0:
+                audio_progress = segment.end if hasattr(segment, 'end') else 0
+                progress_pct = (audio_progress / total_duration *
+                                100) if total_duration > 0 else 0
+                LOGGER.info("Progress: %.0f%% complete", progress_pct)
+                last_log_time = time.time()
+
+            ai_processed_duration += (segment.end - segment.start)
+            text_content = segment.text.strip() if segment.text else ""
+            if text_content:
+                if add_timestamps:
+                    start_str = format_timestamp(segment.start)
+                    end_str = format_timestamp(segment.end)
+                    lines.append(f"[{start_str} -> {end_str}] {text_content}")
+                else:
+                    lines.append(text_content)
+
+            # Update progress (only when it changes by >=1% to reduce overhead).
+            if progress_callback and total_duration > 0:
+                percent = int((segment.end / total_duration) * 100)
+                if percent != last_progress:
+                    progress_callback(min(percent, 100))
+                    last_progress = percent
+
+        return lines, ai_processed_duration
+
+    def _build_report(self, bs, vad_filter, add_timestamps, lang, task,
+                      total_duration, vad_removed_duration, ai_processed_duration,
+                      elapsed_seconds) -> str:
+        """Assemble the human-readable transcription report appended to output."""
+        vad_status = "Active" if vad_filter else "Not Active"
+        timestamp_status = "Yes" if add_timestamps else "No"
+
+        # Map beam_size to Word Analysis Depth name.
+        depth_name = "Custom"
+        if bs == 5 and self._config.compute_type == "int8":
+            depth_name = "Fast Analysis (int8)"
+        elif bs == 5 and self._config.compute_type == "float32":
+            depth_name = "Precise Analysis (float32)"
+        elif bs == 10:
+            depth_name = "Deep Analysis (float32)"
+
+        report = [
+            "\n\n" + "=" * 30,
+            "TRANSCRIPTION REPORT",
+            "=" * 30,
+            f"Model Used: {self._config.model_name}",
+            f"Word Analysis Depth: {depth_name} (Beam Size: {bs})",
+            f"Smart Silence Removal (VAD): {vad_status}",
+            f"Timestamp Added: {timestamp_status}",
+            f"Language: {lang}",
+            f"Task: {task.capitalize()}",
+            "-" * 30,
+            f"Total Audio Duration: {format_duration(total_duration)}",
+            f"VAD Removed Duration: {format_duration(vad_removed_duration)}",
+            f"AI Processed Duration: {format_duration(ai_processed_duration)}",
+            f"Processing Time: {format_duration(elapsed_seconds)}",
+            "=" * 30,
+        ]
+        return "\n".join(report)
+
     def transcribe_file(
         self,
         input_path: Path,
@@ -541,246 +837,54 @@ class Transcriber:
         add_timestamps: bool = True,
         add_report: bool = True,
         pre_converted_path: Optional[Path] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> TranscriptionResult:
         LOGGER.info("Starting transcription: %s", input_path.name)
 
         if not input_path.is_file():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        # Use pre-converted audio if provided, otherwise convert now
-        if pre_converted_path:
-            temp_wav = pre_converted_path
-        else:
-            # Try to repair/convert audio first
-            temp_wav = self.prepare_audio(input_path)
-
+        # Use pre-converted audio if provided, otherwise convert now. When we
+        # create the temp file ourselves we also clean it up below; if the
+        # caller passed pre_converted_path, the caller owns its lifecycle.
+        temp_wav = pre_converted_path if pre_converted_path else self.prepare_audio(input_path)
         actual_input = temp_wav if temp_wav else input_path
 
         bs = beam_size if beam_size is not None else self._config.beam_size
         lang = language if language else self._config.language
 
-        # Auto-detect strategy for large files
-        chunk_length = None
-        use_smart_chunking = False
-        duration_minutes = 0.0
-        full_duration = 0.0
-
-        if self._config.chunk_length is None:
-            # Get audio duration to determine logic
-            try:
-                with wave.open(str(actual_input), "rb") as wf:
-                    full_duration = wf.getnframes() / wf.getframerate()
-                    duration_minutes = full_duration / 60
-
-                    LOGGER.info("Audio duration: %.1f minutes",
-                                duration_minutes)
-
-                    if duration_minutes > 40:
-                        use_smart_chunking = True
-                        LOGGER.info(
-                            "Long audio detected (%.1f min). Using Smart Chunking (physical splitting) to prevent memory errors.",
-                            duration_minutes
-                        )
-                    else:
-                        LOGGER.info(
-                            "Normal duration file (%.1f min). Standard processing.", duration_minutes)
-            except Exception as e:  # pylint: disable=broad-except
-                LOGGER.warning(
-                    "Could not determine audio duration: %s. Proceeding with standard processing.", e)
-        else:
-            # User specified chunk length, respect it but don't force smart chunking unless memory error happens
-            chunk_length = self._config.chunk_length
-            if chunk_length:
-                LOGGER.info(
-                    "Using custom internal chunk length: %ds", chunk_length)
-
+        full_duration, use_smart_chunking, chunk_length = self._resolve_strategy(actual_input)
         start_time = time.time()
-        # Standard Speech VAD parameters (More responsive)
-        vad_params = dict(
-            min_silence_duration_ms=3000,
-            speech_pad_ms=1000,
-            threshold=0.1,
-        ) if vad_filter else None
+        transcribe_kwargs = self._build_transcribe_kwargs(
+            lang, bs, vad_filter, initial_prompt, task, patience, chunk_length)
 
-        # Build transcribe kwargs
-        transcribe_kwargs = dict(
-            language=lang,
-            beam_size=bs,
-            best_of=self._config.best_of,
-            vad_filter=vad_filter,
-            vad_parameters=vad_params,
-            initial_prompt=initial_prompt,
-            condition_on_previous_text=False,
-            task=task,
-            patience=patience,
-        )
-
-        # Only add chunk_length if it's set (for standard processing)
-        if chunk_length is not None:
-            transcribe_kwargs['chunk_length'] = chunk_length
-
-        try:
-            if use_smart_chunking:
-                segments = self._transcribe_chunked(
-                    actual_input, full_duration, transcribe_kwargs)
-
-                # Create dummy info object required by downstream code
-                TranscriptionInfo = namedtuple(
-                    "TranscriptionInfo", ["duration", "language", "language_probability"])
-                info = TranscriptionInfo(
-                    duration=full_duration,
-                    language=lang if lang else "unknown",
-                    language_probability=1.0
-                )
-            else:
-                segments, info = self._model.transcribe(
-                    str(actual_input),
-                    **transcribe_kwargs  # type: ignore[arg-type]
-                )
-        except Exception as e:  # pylint: disable=broad-except
-            error_str = str(e)
-            is_memory_error = "MemoryError" in error_str or "Unable to allocate" in error_str or isinstance(
-                e, MemoryError) or "ArrayMemoryError" in error_str
-
-            if is_memory_error and not use_smart_chunking:
-                LOGGER.warning(
-                    "Memory Error detected during standard processing (%s). Switching to safer Smart Chunking.", error_str)
-
-                # We need duration if we didn't get it before
-                if full_duration == 0.0:
-                    try:
-                        with wave.open(str(actual_input), "rb") as wf:
-                            full_duration = wf.getnframes() / wf.getframerate()
-                    except Exception as ex:  # pylint: disable=broad-except
-                        LOGGER.error(
-                            "Could not determine duration for chunking fallback: %s", ex)
-                        raise e from ex
-
-                segments = self._transcribe_chunked(
-                    actual_input, full_duration, transcribe_kwargs)
-
-                # Create dummy info object
-                TranscriptionInfo = namedtuple(
-                    "TranscriptionInfo", ["duration", "language", "language_probability"])
-                info = TranscriptionInfo(
-                    duration=full_duration,
-                    language=lang if lang else "unknown",
-                    language_probability=1.0
-                )
-
-            # Fallback for VAD errors (only if NOT using smart chunking, as smart chunking re-calls transcribe recursively)
-            # Actually, smart chunking calls _model.transcribe internally, so VAD errors would Bubble up.
-            # We can leave VAD fallback here for the top-level standard call or broadly catch it.
-            elif vad_filter and ("ONNXRuntimeError" in error_str or "INVALID_PROTOBUF" in error_str):
-                LOGGER.warning(
-                    f"VAD failed to load ({e}). Retrying with VAD disabled.")
-                segments, info = self._model.transcribe(
-                    str(actual_input),
-                    language=lang,
-                    beam_size=bs,
-                    best_of=self._config.best_of,
-                    vad_filter=False,
-                    initial_prompt=initial_prompt,
-                )
-            else:
-                raise e
+        segments, info = self._run_transcription(
+            actual_input, transcribe_kwargs, use_smart_chunking, full_duration,
+            lang, bs, vad_filter, initial_prompt, task, patience, cancel_check)
         total_duration = info.duration
 
-        def format_timestamp(seconds: float) -> str:
-            mm, ss = divmod(int(seconds), 60)
-            hh, mm = divmod(mm, 60)
-            if hh > 0:
-                return f"{hh:02d}:{mm:02d}:{ss:02d}"
-            return f"{mm:02d}:{ss:02d}"
-
         LOGGER.info("Processing audio (Duration: %s)",
-                    format_timestamp(total_duration))
-        lines: List[str] = []
-
-        ai_processed_duration = 0.0
-        last_progress = -1
-        segment_count = 0
-        last_log_time = time.time()
-
-        for segment in segments:
-            segment_count += 1
-
-            # Log progress every 60 seconds
-            current_time_elapsed = time.time() - last_log_time
-            if current_time_elapsed >= 60.0:
-                audio_progress = segment.end if hasattr(segment, 'end') else 0
-                progress_pct = (audio_progress / total_duration *
-                                100) if total_duration > 0 else 0
-                LOGGER.info("Progress: %.0f%% complete", progress_pct)
-                last_log_time = time.time()
-            ai_processed_duration += (segment.end - segment.start)
-            text_content = segment.text.strip() if segment.text else ""
-            if text_content:
-                if add_timestamps:
-                    start_str = format_timestamp(segment.start)
-                    end_str = format_timestamp(segment.end)
-                    lines.append(f"[{start_str} -> {end_str}] {text_content}")
-                else:
-                    lines.append(text_content)
-
-            # Update progress (only when it changes by at least 1% to reduce overhead)
-            if progress_callback and total_duration > 0:
-                current_time = segment.end
-                percent = int((current_time / total_duration) * 100)
-                if percent != last_progress:
-                    progress_callback(min(percent, 100))
-                    last_progress = percent
-
+                    format_duration(total_duration))
+        lines, ai_processed_duration = self._render_segments(
+            segments, total_duration, add_timestamps, progress_callback, cancel_check)
         text = "\n".join(lines)
-
-        # --- Generate Transcription Report ---
-        vad_status = "Active" if vad_filter else "Not Active"
-        timestamp_status = "Yes" if add_timestamps else "No"
-
-        # Map beam_size to Word Analysis Depth name
-        depth_name = "Custom"
-        if bs == 5 and self._config.compute_type == "int8":
-            depth_name = "Fast Analysis (int8)"
-        elif bs == 5 and self._config.compute_type == "float32":
-            depth_name = "Precise Analysis (float32)"
-        elif bs == 10:
-            depth_name = "Deep Analysis (float32)"
 
         vad_removed_duration = max(
             0.0, total_duration - ai_processed_duration) if vad_filter else 0.0
-
-        report = [
-            "\n\n" + "="*30,
-            "TRANSCRIPTION REPORT",
-            "="*30,
-            f"Model Used: {self._config.model_name}",
-            f"Word Analysis Depth: {depth_name} (Beam Size: {bs})",
-            f"Smart Silence Removal (VAD): {vad_status}",
-            f"Timestamp Added: {timestamp_status}",
-            f"Language: {lang}",
-            f"Task: {task.capitalize()}",
-            "-"*30,
-            f"Total Audio Duration: {format_timestamp(total_duration)}",
-            f"VAD Removed Duration: {format_timestamp(vad_removed_duration)}",
-            f"AI Processed Duration: {format_timestamp(ai_processed_duration)}",
-            f"Processing Time: {format_timestamp(time.time() - start_time)}",
-            "="*30
-        ]
-
-        report_str = "\n".join(report)
-
+        report_str = self._build_report(
+            bs, vad_filter, add_timestamps, lang, task, total_duration,
+            vad_removed_duration, ai_processed_duration, time.time() - start_time)
         if add_report:
             text += report_str
 
-        # Log the report so it shows in the GUI
+        # Log the report so it shows in the GUI.
         LOGGER.info(report_str)
 
-        # Cleanup temp file ONLY if we created it internally
-        # If pre_converted_path was passed, the caller is responsible for cleanup
+        # Cleanup temp file ONLY if we created it internally.
         if not pre_converted_path and temp_wav and temp_wav.exists():
             try:
                 os.unlink(temp_wav)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 LOGGER.warning("Failed to remove temp file: %s", e)
 
         resolved_output: Optional[Path] = None

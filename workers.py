@@ -20,51 +20,32 @@ LOGGER = logging.getLogger(__name__)
 EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
-class SingleFileWorker(QThread):
-    finished = pyqtSignal(object)
-    failed = pyqtSignal(str)
-    progress = pyqtSignal(int)
+class ModelLoaderWorker(QThread):
+    """Loads the Whisper model off the GUI thread.
 
-    def __init__(
-        self,
-        transcriber: Transcriber,
-        input_path: Path,
-        output_path: Optional[Path],
-    ) -> None:
+    Building a ``Transcriber`` instantiates ``WhisperModel`` (a multi-hundred-MB
+    blocking load), which previously ran on the Qt main loop and froze the UI
+    ("Not Responding") on every model / compute-type change. This worker moves
+    that load to a background thread and signals the result.
+    """
+
+    loaded = pyqtSignal(object)   # Transcriber
+    failed = pyqtSignal(str)      # error message
+
+    def __init__(self, config) -> None:
         super().__init__()
-        self._transcriber = transcriber
-        self._input_path = input_path
-        self._output_path = output_path
-        self._cancel = False
-
-    def request_cancel(self) -> None:
-        self._cancel = True
+        self._config = config
 
     def run(self) -> None:
-        LOGGER.info("=== WORKER RUN STARTED ===")
-        if self._cancel:
-            LOGGER.info("Worker cancelled before start")
-            self.failed.emit("Cancelled")
-            return
         try:
-            LOGGER.info("Starting transcription of: %s", self._input_path)
-            result = self._transcriber.transcribe_file(
-                self._input_path,
-                output_path=self._output_path,
-                progress_callback=self.progress.emit,
-            )
-            LOGGER.info("Transcription completed successfully")
-            if self._cancel:
-                LOGGER.info("Worker cancelled after transcription")
-                self.failed.emit("Cancelled")
-                return
-            LOGGER.info("Emitting finished signal...")
-            self.finished.emit(result)
-            LOGGER.info("Finished signal emitted")
-        except Exception as exc:  # noqa
+            LOGGER.info("Loading model on background thread...")
+            transcriber = Transcriber(self._config)
+            LOGGER.info("Model loaded successfully.")
+            self.loaded.emit(transcriber)
+        except Exception as exc:  # noqa: BLE001  pylint: disable=broad-except
             import traceback
-            error_msg = f"{str(exc)}\n\nTraceback:\n{traceback.format_exc()}"
-            LOGGER.error("Transcription failed: %s", error_msg)
+            LOGGER.error("Model loading failed: %s\n%s",
+                         exc, traceback.format_exc())
             self.failed.emit(str(exc))
 
 
@@ -246,6 +227,7 @@ class BatchWorker(QThread):
                             add_timestamps=self._add_timestamps,
                             add_report=self.add_report,
                             pre_converted_path=temp_wav, # Pass the pre-converted file
+                            cancel_check=lambda: self._cancel,
                         )
 
                     # Update session: file completed

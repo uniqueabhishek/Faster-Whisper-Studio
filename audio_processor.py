@@ -592,6 +592,9 @@ def preprocess_audio(
         LOGGER.error("ffmpeg not found. Cannot preprocess audio.")
         return None
 
+    # Bound the temp-dir leak from earlier no-output-dir runs.
+    _cleanup_stale_preprocess_dirs()
+
     try:
         # Determine output directory
         if config.output_dir:
@@ -726,6 +729,34 @@ def preprocess_audio(
     except Exception as e:
         LOGGER.error("Preprocessing failed for %s: %s", input_path.name, str(e))
         return None
+
+
+def _cleanup_stale_preprocess_dirs(max_age_seconds: float = 3600) -> None:
+    """Reap leftover ``whisper_preprocess_*`` temp dirs from earlier runs.
+
+    When no output dir is configured, preprocessing stages its results under a
+    ``mkdtemp`` dir whose final ``_preprocessed.wav`` is consumed later by
+    transcription, so the dir can't be deleted on return. To keep this from
+    growing without bound in %TEMP%, remove such dirs older than
+    ``max_age_seconds`` at the start of each preprocessing run.
+    """
+    import shutil
+    import time
+
+    temp_root = Path(tempfile.gettempdir())
+    now = time.time()
+    try:
+        stale_dirs = list(temp_root.glob("whisper_preprocess_*"))
+    except OSError:
+        return
+
+    for directory in stale_dirs:
+        try:
+            if directory.is_dir() and (now - directory.stat().st_mtime) > max_age_seconds:
+                shutil.rmtree(directory, ignore_errors=True)
+                LOGGER.info("Removed stale preprocess temp dir: %s", directory)
+        except OSError:
+            pass
 
 
 def _cleanup_temp_files(temp_files: list[Path]) -> None:

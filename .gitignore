@@ -37,3 +37,6 @@ nul
 
 # Security
 admin_keys/
+
+# Large redistributable binary (fetched at build time via download_vc_redist.py)
+assets/vc_redist.x64.exe

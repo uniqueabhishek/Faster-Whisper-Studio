@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import logging
+import tempfile
 import traceback
+from logging.handlers import RotatingFileHandler
 
 # Fix for DLL load failed error: onnxruntime must be imported before PyQt5
 try:
@@ -57,6 +60,59 @@ def exception_hook(exctype, value, tb):
         pass
 
 
+def _log_directory() -> str:
+    """Pick a writable directory for the log file.
+
+    The previous build logged to ``whisper_gui_debug.log`` in the current working
+    directory with ``mode='w'`` — which wiped history every launch and, for an
+    installed exe under Program Files, is typically NOT writable (so logging
+    setup itself could fail). Prefer a per-user app-data dir, then the system
+    temp dir, then the cwd as a last resort.
+    """
+    candidates = []
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        candidates.append(os.path.join(local_appdata, "FasterWhisperGUI", "logs"))
+    candidates.append(os.path.join(tempfile.gettempdir(), "FasterWhisperGUI", "logs"))
+    candidates.append(os.getcwd())
+
+    for directory in candidates:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            # Confirm it is actually writable.
+            probe = os.path.join(directory, ".write_test")
+            with open(probe, "w", encoding="utf-8"):
+                pass
+            os.remove(probe)
+            return directory
+        except OSError:
+            continue
+    return os.getcwd()
+
+
+def _setup_logging() -> str:
+    """Configure rotating file + console logging. Returns the log file path."""
+    log_path = os.path.join(_log_directory(), "whisper_gui_debug.log")
+
+    handlers: list[logging.Handler] = []
+    try:
+        # Rotate (append, keep history) instead of truncating every run.
+        handlers.append(RotatingFileHandler(
+            log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"))
+    except OSError:
+        # If even the chosen directory fails at open time, carry on with console
+        # logging only rather than crashing the app over a log file.
+        pass
+    handlers.append(logging.StreamHandler(sys.stdout))
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] [%(levelname)s] %(message)s",
+        handlers=handlers,
+    )
+    return log_path
+
+
 def main() -> None:
     """Main application entry point."""
     # Install global exception hook
@@ -65,16 +121,10 @@ def main() -> None:
     # Must run before any window is created so the taskbar groups under our icon.
     _set_app_user_model_id()
 
-    # Setup logging to both file and console
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler("whisper_gui_debug.log", mode='w'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    logging.info("Application starting...")
+    # Setup logging to both a rotating file (in a writable per-user location)
+    # and the console.
+    log_path = _setup_logging()
+    logging.info("Application starting... (log file: %s)", log_path)
 
     try:
         app = QApplication(sys.argv)

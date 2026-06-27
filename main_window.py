@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 from preprocessing_gui import PreprocessingView, PreprocessingWindow
 from gui import TranscriptionView
 from styles import DARK_THEME_QSS, apply_dark_title_bar
+from ui_common import center_window
 
 LOGGER = logging.getLogger(__name__)
 

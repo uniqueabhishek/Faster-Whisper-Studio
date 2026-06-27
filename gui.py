@@ -39,17 +39,14 @@ from transcriber import (
     Transcriber,
     TranscriptionResult,
 )
-from workers import BatchWorker
+from workers import BatchWorker, ModelLoaderWorker
 from styles import DARK_THEME_QSS, apply_dark_title_bar
 from session_manager import SessionManager, SessionState
 from resume_dialog import ResumeSessionDialog
+from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window
 
 LOGGER = logging.getLogger(__name__)
 
-MEDIA_FILTER = (
-    "Media Files (*.mp3 *.wav *.m4a *.flac *.ogg *.mp4 *.mkv *.webm);;"
-    "All Files (*)"
-)
 DEFAULT_WIDTH = 1300
 DEFAULT_HEIGHT = 800
 APP_VERSION = "v2.1.3"
@@ -69,94 +66,6 @@ LANGUAGE_MAP = {
 }
 
 
-class LogSignal(QObject):
-    """Signal emitter for logging."""
-    log_signal = pyqtSignal(str)
-
-
-class QtLogHandler(logging.Handler):
-    """Custom logging handler that emits signals to a QTextEdit."""
-
-    def __init__(self, text_widget: QTextEdit):
-        super().__init__()
-        self.text_widget = text_widget
-        self.emitter = LogSignal()
-        self.emitter.log_signal.connect(self._append_text)
-        self.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%H:%M:%S"))
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.emitter.log_signal.emit(msg)
-
-    def _append_text(self, msg: str):
-        self.text_widget.append(msg)
-        self.text_widget.verticalScrollBar().setValue(
-            self.text_widget.verticalScrollBar().maximum()
-        )
-
-
-class DragDropWidget(QFrame):
-    """A styled frame that accepts file drops."""
-
-    filesDropped = pyqtSignal(list)
-
-    def __init__(self, title: str = "Drag & Drop Files Here"):
-        super().__init__()
-        self.setAcceptDrops(True)
-        self.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-            QFrame:hover {
-                border-color: #3b82f6;
-                background-color: #2d2d2d;
-            }
-        """)
-
-        layout = QVBoxLayout(self)
-        self.label = QLabel(title)
-        self.label.setAlignment(Qt.AlignCenter)
-        self.label.setStyleSheet("color: #9ca3af; font-weight: bold;")
-        layout.addWidget(self.label)
-
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            event.accept()
-            self.setStyleSheet("""
-                QFrame {
-                    border: 2px dashed #3b82f6;
-                    background-color: #333333;
-                }
-            """)
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-        """)
-
-    def dropEvent(self, event: QDropEvent):
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #4b5563;
-                border-radius: 8px;
-                background-color: #262626;
-            }
-        """)
-        urls = event.mimeData().urls()
-        if urls:
-            paths = [u.toLocalFile() for u in urls]
-            self.filesDropped.emit(paths)
-
-
 class TranscriptionView(QWidget):
     """Transcription view widget (embeddable)."""
 
@@ -168,6 +77,8 @@ class TranscriptionView(QWidget):
 
         self._transcriber: Optional[Transcriber] = None
         self._worker: Optional[BatchWorker] = None
+        self._model_loader: Optional[ModelLoaderWorker] = None
+        self._pending_batch_args: Optional[dict] = None
         self._status_bar: Optional[QStatusBar] = None
         self._resume_session: Optional[SessionState] = None
 
@@ -663,83 +574,80 @@ class TranscriptionView(QWidget):
 
         LOGGER.info("Model directory selected: %s", model_dir)
 
-    def _lazy_load_model(self) -> bool:
+    def _build_config(self) -> Optional[TranscriptionConfig]:
+        """Build the TranscriptionConfig from the UI (no model load here).
+
+        Device/compute-type detection is cheap and kept on the GUI thread so the
+        reload check below can compare fully-resolved configs. The expensive
+        model load happens off-thread in ModelLoaderWorker.
+        """
+        import os
+
         # Parse compute type
-        ctype_text = self.compute_combo.currentText()
         # "Fast Analysis (int8)" -> int8
-        # "Precise Analysis (float32)" -> float32
-        # "Deep Analysis (float32)" -> float32
+        # "Precise Analysis (float32)" / "Deep Analysis (float32)" -> float32
+        ctype_text = self.compute_combo.currentText()
         if "Precise" in ctype_text or "Deep" in ctype_text:
             compute_type = "float32"
         else:
             compute_type = "int8"
 
         model_path = self.model_edit.text().strip()
+        if not model_path:
+            self.show_error("No model selected.")
+            return None
 
-        # Check if we need to reload
-        if self._transcriber is not None:
-            current_config = self._transcriber._config
-            if (current_config.model_name == model_path and
-                current_config.compute_type == compute_type):
-                return True
-
-            LOGGER.info("Configuration changed. Reloading model...")
-            self._transcriber = None
-
-        if self.statusBar():
-            self.statusBar().showMessage("Loading model...")
+        # Detect GPU via CTranslate2's own CUDA runtime — no torch dependency.
+        # (CTranslate2 is what actually runs the model and ships its own CUDA
+        # libs, so its device count is the authoritative signal.)
+        device = "cpu"
         try:
-            import os
+            import ctranslate2
+            if ctranslate2.get_cuda_device_count() > 0:
+                device = "cuda"
+                # GPU: use float16 for speed (2-3x faster than float32)
+                if compute_type == "int8":
+                    compute_type = "float16"  # int8 not supported on GPU
+                LOGGER.info("CUDA GPU detected! Using GPU acceleration.")
+            else:
+                LOGGER.info("CUDA not available. Using CPU.")
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.info("GPU detection unavailable (%s). Using CPU.", exc)
 
-            # Try to detect GPU (optional - fallback to CPU if torch not available)
-            device = "cpu"
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    device = "cuda"
-                    # GPU: use float16 for speed (2-3x faster than float32)
-                    if compute_type == "int8":
-                        compute_type = "float16"  # int8 not supported on GPU
-                    LOGGER.info("CUDA GPU detected! Using GPU acceleration.")
-                else:
-                    LOGGER.info("CUDA not available. Using CPU.")
-            except ImportError:
-                LOGGER.info("PyTorch not installed. Using CPU mode only.")
+        # Use all available CPU cores for maximum speed
+        cpu_count = os.cpu_count() or 4
 
-            # Use all available CPU cores for maximum speed
-            cpu_count = os.cpu_count() or 4
+        return TranscriptionConfig(
+            model_name=model_path,
+            language=None,
+            device=device,  # Auto-detect GPU or fallback to CPU
+            compute_type=compute_type,
+            cpu_threads=cpu_count,  # Use all CPU cores
+            num_workers=1,  # Keep at 1 for now (can increase for batch processing)
+        )
 
-            config = TranscriptionConfig(
-                model_name=model_path,
-                language=None,
-                device=device,  # Auto-detect GPU or fallback to CPU
-                compute_type=compute_type,
-                cpu_threads=cpu_count,  # Use all CPU cores
-                num_workers=1,  # Keep at 1 for now (can increase for batch processing)
-            )
-            self._transcriber = Transcriber(config)
-        except Exception as exc:
-            error_msg = str(exc)
-            LOGGER.exception("Model loading failed")
-            self.show_error(f"Failed to load model:\n{error_msg}")
-            if self.statusBar():
-                self.statusBar().showMessage("Model load failed.")
-            return False
-
-        self.start_btn.setEnabled(True)
-        if self.statusBar():
-            self.statusBar().showMessage("Model loaded.")
-        return True
+    def _needs_reload(self, config: TranscriptionConfig) -> bool:
+        """True if the currently-loaded model doesn't match the requested config."""
+        if self._transcriber is None:
+            return True
+        current = self._transcriber._config
+        return not (
+            current.model_name == config.model_name and
+            current.compute_type == config.compute_type and
+            current.device == config.device
+        )
 
     def on_start_clicked(self) -> None:
         if self.file_list.count() == 0:
             self.show_error("No files to transcribe.")
             return
 
-        if not self._lazy_load_model():
+        if self._worker is not None or self._model_loader is not None:
+            # Already running or loading; ignore double-clicks.
             return
 
-        if self._transcriber is None:
+        config = self._build_config()
+        if config is None:
             return
 
         # Collect files
@@ -762,8 +670,6 @@ class TranscriptionView(QWidget):
 
         # self.file_status_list.clear() # Removed
         self.progress_bar.setValue(0)
-        if self.statusBar():
-            self.statusBar().showMessage("Starting transcription...")
         self._set_busy(True)
         self.transcription_started.emit()  # Emit signal
 
@@ -803,10 +709,11 @@ class TranscriptionView(QWidget):
         self.settings.setValue("initial_prompt", self.prompt_edit.text())
         self.settings.setValue("task", self.task_combo.currentText())
 
-        worker = BatchWorker(
-            self._transcriber,
-            input_files,
-            output_dir,  # output_dir (None = same as input)
+        # Stash everything the BatchWorker needs. The batch is started either now
+        # (model already loaded) or once the off-thread model load completes.
+        self._pending_batch_args = dict(
+            input_files=input_files,
+            output_dir=output_dir,  # output_dir (None = same as input)
             beam_size=beam_size,
             language=language,
             initial_prompt=initial_prompt,
@@ -816,10 +723,59 @@ class TranscriptionView(QWidget):
             add_report=add_report,
             resume_session=self._resume_session,  # Pass resume session if exists
         )
-        self._worker = worker
-
-        # Clear resume session after starting (prevent reuse)
+        # Clear resume session now to prevent reuse on a later run.
         self._resume_session = None
+
+        if not self._needs_reload(config):
+            # Fast path: model already loaded with the right config.
+            if self.statusBar():
+                self.statusBar().showMessage("Starting transcription...")
+            self._start_pending_batch()
+            return
+
+        # Slow path: (re)load the model off the GUI thread so the UI stays
+        # responsive, then start the batch from the loader's `loaded` signal.
+        self._transcriber = None
+        if self.statusBar():
+            self.statusBar().showMessage("Loading model...")
+        loader = ModelLoaderWorker(config)
+        self._model_loader = loader
+        loader.loaded.connect(self._on_model_loaded)
+        loader.failed.connect(self._on_model_load_failed)
+        loader.start()
+
+    def _on_model_loaded(self, transcriber: Transcriber) -> None:
+        self._transcriber = transcriber
+        self._model_loader = None
+        if self.statusBar():
+            self.statusBar().showMessage("Model loaded. Starting transcription...")
+        self._start_pending_batch()
+
+    def _on_model_load_failed(self, message: str) -> None:
+        self._model_loader = None
+        self._pending_batch_args = None
+        self._set_busy(False)
+        if self.statusBar():
+            self.statusBar().showMessage("Model load failed.")
+        self.show_error(f"Failed to load model:\n{message}")
+        self.transcription_finished.emit()
+
+    def _start_pending_batch(self) -> None:
+        """Create and start the BatchWorker from the stashed arguments."""
+        args = self._pending_batch_args
+        self._pending_batch_args = None
+
+        # args is None if the start was cancelled while the model was loading;
+        # transcriber is None if the load failed.
+        if self._transcriber is None or args is None:
+            self._set_busy(False)
+            if self.statusBar():
+                self.statusBar().showMessage("Cancelled.")
+            self.transcription_finished.emit()
+            return
+
+        worker = BatchWorker(self._transcriber, **args)
+        self._worker = worker
 
         worker.progress.connect(self.on_progress)
         # worker.speed.connect(self.on_speed_update) # Removed
@@ -870,8 +826,19 @@ class TranscriptionView(QWidget):
     def on_cancel_clicked(self) -> None:
         if self._worker:
             self._worker.request_cancel()
-        if self.statusBar():
-            self.statusBar().showMessage("Cancelling...")
+            if self.statusBar():
+                self.statusBar().showMessage("Cancelling...")
+        elif self._model_loader is not None and self._model_loader.isRunning():
+            # Model is still loading (a blocking CTranslate2 call that can't be
+            # interrupted cleanly): drop the queued batch so it won't auto-start
+            # once the load finishes, disable the now-pointless cancel button,
+            # and tell the user we're waiting the load out. The loaded model is
+            # still cached for the next run.
+            self._pending_batch_args = None
+            self.cancel_btn.setEnabled(False)
+            if self.statusBar():
+                self.statusBar().showMessage(
+                    "Finishing model load, then cancelling…")
 
     def _set_busy(self, busy: bool) -> None:
         if busy:
@@ -915,11 +882,7 @@ class TranscriptionWindow(QMainWindow):
 
     def _center_window(self) -> None:
         """Centers the window on the screen."""
-        frame_gm = self.frameGeometry()
-        screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
-        center_point = QApplication.desktop().screenGeometry(screen).center()
-        frame_gm.moveCenter(center_point)
-        self.move(frame_gm.topLeft())
+        center_window(self)
 
 
 # Backward compatibility alias
