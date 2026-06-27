@@ -16,12 +16,14 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QButtonGroup,
+    QMessageBox,
 )
 
 from preprocessing_gui import PreprocessingView, PreprocessingWindow
 from gui import TranscriptionView
 from styles import DARK_THEME_QSS, apply_dark_title_bar
 from ui_common import center_window
+from ffmpeg_dialog import FfmpegDialog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +57,15 @@ SIDEBAR_STYLE = """
     }
 """
 
+_MENU_STYLE = """
+    QMenuBar { background-color: #1e1e1e; color: #cccccc; }
+    QMenuBar::item { padding: 4px 10px; background: transparent; }
+    QMenuBar::item:selected { background-color: #0e639c; color: #ffffff; }
+    QMenu { background-color: #252526; color: #cccccc; border: 1px solid #3e3e3e; }
+    QMenu::item { padding: 5px 24px; }
+    QMenu::item:selected { background-color: #0e639c; color: #ffffff; }
+"""
+
 
 class MainWindow(QMainWindow):
     """Main window with sidebar navigation."""
@@ -83,6 +94,7 @@ class MainWindow(QMainWindow):
         self._separate_preprocessing_windows: List[PreprocessingWindow] = []
 
         self._build_ui()
+        self._build_menu()
 
         # Restore last view
         last_view = self.settings.value("last_view", 0, type=int)
@@ -94,13 +106,32 @@ class MainWindow(QMainWindow):
 
     def _center_window(self) -> None:
         """Centers the window on the screen."""
-        frame_gm = self.frameGeometry()
-        desktop = QApplication.desktop()
-        if desktop:
-            screen = desktop.screenNumber(desktop.cursor().pos())  # type: ignore[attr-defined]
-            center_point = desktop.screenGeometry(screen).center()  # type: ignore[attr-defined]
-            frame_gm.moveCenter(center_point)
-            self.move(frame_gm.topLeft())
+        center_window(self)
+
+    def _build_menu(self) -> None:
+        """Add a top menu bar (Tools)."""
+        menubar = self.menuBar()
+        menubar.setStyleSheet(_MENU_STYLE)
+        tools_menu = menubar.addMenu("&Tools")
+
+        update_action = tools_menu.addAction("Update FFmpeg…")
+        update_action.triggered.connect(self._open_ffmpeg)
+
+        tools_menu.addSeparator()
+
+        app_update_action = tools_menu.addAction("Check for App Updates…")
+        app_update_action.triggered.connect(self._check_app_updates)
+
+    def _open_ffmpeg(self) -> None:
+        """Open the FFmpeg dialog (shows version/source + update)."""
+        FfmpegDialog(self).exec_()
+
+    def _check_app_updates(self) -> None:
+        """Placeholder for app self-update (to be wired up later)."""
+        QMessageBox.information(
+            self, "Check for App Updates",
+            "Update checking is not available yet.\n\n"
+            "This will be enabled in a future release.")
 
     def _build_ui(self) -> None:
         """Build the main UI with sidebar and stacked widget."""

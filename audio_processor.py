@@ -20,6 +20,11 @@ except ImportError:
     LOGGER = logging.getLogger(__name__)
     LOGGER.warning("Could not import transcriber - VAD may not work correctly")
 
+from ffmpeg_utils import get_ffmpeg_path
+
+# Prefer a bundled ffmpeg (assets/ffmpeg/); fall back to PATH, then the bare name.
+_FFMPEG = get_ffmpeg_path() or "ffmpeg"
+
 
 @dataclass
 class PreprocessingConfig:
@@ -95,7 +100,7 @@ def convert_to_wav_16khz_mono(
 
         # ffmpeg -i input -ar <sample_rate> -ac <channels> -c:a <codec> output.wav
         cmd = [
-            "ffmpeg", "-y",
+            _FFMPEG, "-y",
             "-i", str(input_path),
             "-ar", str(sample_rate),
             "-ac", str(channels),
@@ -173,7 +178,7 @@ def normalize_audio(
         # TP = true peak target
         # LRA = loudness range target
         cmd = [
-            "ffmpeg", "-y",
+            _FFMPEG, "-y",
             "-i", str(input_path),
             "-af", f"loudnorm=I={target_db}:TP={true_peak}:LRA={loudness_range}",
             str(output_path)
@@ -247,7 +252,7 @@ def reduce_noise(
         # gs = gain smoothing for artifact reduction
         filter_str = f"afftdn=nr={noise_reduction}:nf={noise_floor}:gs={gain_smooth}"
         cmd = [
-            "ffmpeg", "-y",
+            _FFMPEG, "-y",
             "-i", str(input_path),
             "-af", filter_str,
             str(output_path)
@@ -325,7 +330,7 @@ def remove_music(
         filter_chain = f"highpass=f={highpass_freq},lowpass=f={lowpass_freq}"
 
         cmd = [
-            "ffmpeg", "-y",
+            _FFMPEG, "-y",
             "-i", str(input_path),
             "-af", filter_chain,
             str(output_path)
@@ -524,7 +529,7 @@ def _trim_silence_ffmpeg(
         # stop_duration=0.5
         # stop_threshold=-50dB
         cmd = [
-            "ffmpeg", "-y",
+            _FFMPEG, "-y",
             "-i", str(input_path),
             "-af", "silenceremove=start_periods=1:start_duration=0.5:start_threshold=-50dB:stop_periods=-1:stop_duration=0.5:stop_threshold=-50dB",
             str(output_path)
@@ -587,9 +592,10 @@ def preprocess_audio(
     """
     import shutil
 
-    # Check if ffmpeg is available
-    if not shutil.which("ffmpeg"):
-        LOGGER.error("ffmpeg not found. Cannot preprocess audio.")
+    # Check if ffmpeg is available (bundled binary or PATH).
+    if not get_ffmpeg_path():
+        LOGGER.error("ffmpeg not found (no bundled binary or PATH entry). "
+                     "Cannot preprocess audio.")
         return None
 
     # Bound the temp-dir leak from earlier no-output-dir runs.

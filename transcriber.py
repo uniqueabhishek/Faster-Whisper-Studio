@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 from collections import namedtuple
 
+from ffmpeg_utils import get_ffmpeg_path
+
 LOGGER = logging.getLogger(__name__)
+
+# Prefer a bundled ffmpeg (assets/ffmpeg/); fall back to PATH, then the bare name
+# so behavior degrades to the previous PATH lookup when nothing is bundled.
+_FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
 try:
     from faster_whisper import WhisperModel
@@ -252,8 +258,9 @@ class Transcriber:
            Returns Path to temp file if converted, or None if original is fine.
            cancel_check: Optional callable that returns True if cancellation is requested.
         """
-        if not shutil.which("ffmpeg"):
-            LOGGER.warning("ffmpeg not found. Skipping audio repair.")
+        if not get_ffmpeg_path():
+            LOGGER.warning("ffmpeg not found (no bundled binary or PATH entry). "
+                           "Skipping audio repair.")
             return None
 
         # Optimization: Check if file is already 16kHz mono WAV
@@ -288,7 +295,7 @@ class Transcriber:
 
             # ffmpeg -i input -ar 16000 -ac 1 -c:a pcm_s16le output.wav
             cmd = [
-                "ffmpeg", "-y",
+                _FFMPEG, "-y",
                 "-i", str(input_path),
                 "-ar", "16000",
                 "-ac", "1",
@@ -352,7 +359,7 @@ class Transcriber:
 
             # Simple ffmpeg slice
             cmd = [
-                "ffmpeg", "-y",
+                _FFMPEG, "-y",
                 "-i", str(input_path),
                 "-ss", str(start),
                 "-t", str(duration),
@@ -431,7 +438,7 @@ class Transcriber:
             # Run silencedetect filter
             # We look for silence > 0.5s with -30dB threshold
             cmd = [
-                "ffmpeg", "-y",
+                _FFMPEG, "-y",
                 "-i", str(input_path),
                 "-ss", str(start_search),
                 "-t", str(actual_window),
