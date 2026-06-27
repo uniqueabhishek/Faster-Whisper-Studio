@@ -38,11 +38,12 @@ def main():
         print("Invalid date format! Use YYYY-MM-DD")
         return
 
+    # Canonical schema shared with generate_test_license.py.
     license_data = {
         "customer": customer_name,
         "machine_id": machine_id,
         "expiry": expiry_str,
-        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "issued": datetime.now().strftime("%Y-%m-%d"),
     }
 
     license_json = json.dumps(license_data, sort_keys=True)

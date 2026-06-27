@@ -123,6 +123,12 @@ def verify_license_gui():
                 "License Error", "Invalid License Signature.\n\nThe license file has been tampered with.")
             sys.exit(1)
 
+        # Validate required fields before indexing (clear error vs opaque KeyError).
+        if "machine_id" not in data or "expiry" not in data:
+            show_error("License Error",
+                       "License file is missing required fields. Please contact support.")
+            sys.exit(1)
+
         # Verify Machine ID
         if data["machine_id"] != current_hwid:
             show_error(

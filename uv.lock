@@ -503,8 +503,6 @@ dependencies = [
     { name = "ntplib" },
     { name = "onnxruntime" },
     { name = "psutil" },
-    { name = "pyarmor" },
-    { name = "pyinstaller" },
     { name = "pyside6" },
     { name = "python-docx" },
     { name = "pywin32" },
@@ -514,6 +512,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+build = [
+    { name = "pyarmor" },
+    { name = "pyinstaller" },
+]
 dev = [
     { name = "pytest" },
 ]
@@ -528,8 +530,8 @@ requires-dist = [
     { name = "ntplib", specifier = ">=0.4.0" },
     { name = "onnxruntime", specifier = ">=1.14.0" },
     { name = "psutil", specifier = ">=5.9.0" },
-    { name = "pyarmor", specifier = "==9.2.3" },
-    { name = "pyinstaller", specifier = ">=6.0.0" },
+    { name = "pyarmor", marker = "extra == 'build'", specifier = "==9.2.3" },
+    { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.0.0" },
     { name = "pyside6", specifier = ">=6.6.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "python-docx", specifier = ">=0.8.11" },
@@ -538,7 +540,7 @@ requires-dist = [
     { name = "tokenizers", specifier = ">=0.13.0" },
     { name = "wmi", specifier = ">=1.5.1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "build"]
 
 [[package]]
 name = "filelock"

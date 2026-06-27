@@ -208,8 +208,10 @@ class TranscriptionView(QWidget):
         self.model_btn.setToolTip("Select the folder containing your Faster-Whisper model.\n\n"
                                   "IMPORTANT: Must be a CTranslate2 converted model\n"
                                   "(folder must contain 'model.bin' and 'config.json').\n\n"
-                                  "Standard OpenAI .pt files will NOT work.\n"
-                                  "Compatible: tiny, base, small, medium, large-v1/v2/v3, distil-large-v2/v3.")
+                                  "Standard OpenAI .pt files will NOT work.\n\n"
+                                  "Recommended: large-v3-turbo (best speed/accuracy, 99 languages).\n"
+                                  "Fastest for English-only audio: distil-large-v3.5.\n"
+                                  "Also compatible: tiny, base, small, medium, large-v1/v2/v3, distil-large-v2/v3.")
         self.model_btn.setObjectName("SecondaryBtn")
         self.model_btn.clicked.connect(self.on_select_model_clicked)
         self.model_btn.setMinimumHeight(30) # Taller button
@@ -759,6 +761,14 @@ class TranscriptionView(QWidget):
         worker.finished.connect(self.on_finished)
         worker.failed.connect(self.on_failed)
         worker.start()
+
+    def shutdown(self) -> None:
+        """Cancel running work and join threads before the app closes."""
+        for thread in (self._worker, self._model_loader):
+            if thread is not None and thread.isRunning():
+                if hasattr(thread, "request_cancel"):
+                    thread.request_cancel()
+                thread.wait(5000)
 
     def on_file_status_update(self, filename: str, status: str) -> None:
         # Find the item in the list and update it

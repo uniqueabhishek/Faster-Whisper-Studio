@@ -13,7 +13,7 @@ A powerful desktop GUI application for accurate audio/video transcription using 
 ## Features
 
 ### Core Transcription
-- **Multiple Model Sizes**: tiny, base, small, medium, large-v2, large-v3
+- **Multiple Model Sizes**: tiny, base, small, medium, large-v2, large-v3, large-v3-turbo (recommended), distil-large-v3.5 (fastest English)
 - **GPU Acceleration**: CUDA support for faster processing (requires NVIDIA GPU)
 - **Multi-language Support**: Auto-detect or specify from 10+ languages
 - **Batch Processing**: Queue multiple files for sequential transcription
@@ -148,7 +148,7 @@ If transcription is interrupted:
 
 | Setting | Options | Description |
 |---------|---------|-------------|
-| Model | tiny, base, small, medium, large-v2, large-v3 | Accuracy vs speed tradeoff |
+| Model | tiny, base, small, medium, large-v2, large-v3, large-v3-turbo, distil-large-v3.5 | Accuracy vs speed tradeoff (large-v3-turbo recommended) |
 | Device | CPU, CUDA | Processing device |
 | Language | Auto, English, Hindi, Japanese, etc. | Target language |
 | Compute Type | int8, float16, float32 | Precision level |
@@ -214,7 +214,7 @@ Identify interesting segments:
 - Check GPU compatibility
 
 **Transcription is inaccurate**
-- Use a larger model (large-v3 recommended)
+- Use a larger model (large-v3-turbo recommended; large-v3 for maximum accuracy)
 - Specify language instead of auto-detect
 - Apply noise reduction preprocessing
 - Check audio quality

@@ -21,7 +21,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from main_window import MainWindow
 from ui_common import app_icon
-from workers import EXECUTOR
 
 
 def _set_app_user_model_id() -> None:
@@ -161,9 +160,8 @@ def main() -> None:
             input("Press Enter to exit...")
         except Exception:  # pylint: disable=broad-except
             pass
-    finally:
-        # Ensure all worker threads terminate cleanly
-        EXECUTOR.shutdown(wait=False)
+    # Worker threads are owned by the views and joined in MainWindow.closeEvent;
+    # the batch's ThreadPoolExecutor is per-run and shuts itself down.
 
 
 if __name__ == "__main__":

@@ -86,13 +86,15 @@ The application supports all OpenAI Whisper model sizes, allowing you to choose 
 | **SMALL** | 244 M parameters | ~2 GB RAM | Balanced speed/accuracy - Recommended for most users |
 | **MEDIUM** | 769 M parameters | ~5 GB RAM | High accuracy - Professional quality |
 | **LARGE-V1/V2** | 1550 M parameters | ~10 GB RAM | Highest accuracy - Best for critical work |
-| **LARGE-V3** | 1550 M parameters | ~10 GB RAM | Latest & most accurate - Cutting-edge performance |
+| **LARGE-V3** | 1550 M parameters | ~10 GB RAM | Most accurate - Best for critical multilingual work |
+| **LARGE-V3-TURBO** | 809 M parameters | ~6 GB RAM | **Recommended** - ~6-8x faster than large-v3 at near-equal accuracy, 99 languages |
+| **DISTIL-LARGE-V3.5** | 756 M parameters | ~6 GB RAM | Fastest high-accuracy option - **English-only**, ~1.5x faster than turbo |
 
 ### Performance Notes:
 *   GPU Acceleration: With CUDA-capable GPU, even large models run 5-10x faster
 *   CPU Performance: All models work on CPU, though larger models are slower
 *   Memory: Requirements decrease with GPU acceleration
-*   Recommended: "small" model for most users, "medium" or "large" for professional work
+*   Recommended: "large-v3-turbo" for the best speed/accuracy balance; "distil-large-v3.5" for the fastest English-only transcription; "small" for low-end hardware
 *   Model Selection: Choose based on your hardware, accuracy needs, and speed requirements
 
 ## Technical Highlights

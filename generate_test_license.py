@@ -16,9 +16,10 @@ with open("admin_keys/private_key.pem", "rb") as f:
         backend=default_backend()
     )
 
-# Create license data
+# Create license data (canonical schema: customer, machine_id, expiry, issued)
 expiry_date = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
 license_data = {
+    "customer": "DEV-TEST",
     "machine_id": MACHINE_ID,
     "expiry": expiry_date,
     "issued": datetime.now().strftime("%Y-%m-%d"),

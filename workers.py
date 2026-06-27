@@ -16,9 +16,6 @@ from memory_manager import MemoryManager, MemoryMonitor
 
 LOGGER = logging.getLogger(__name__)
 
-# Global executor for parallel batch
-EXECUTOR = ThreadPoolExecutor(max_workers=2)
-
 
 class ModelLoaderWorker(QThread):
     """Loads the Whisper model off the GUI thread.
@@ -306,10 +303,11 @@ class BatchWorker(QThread):
                 # Lightweight memory cleanup between files
                 MemoryManager.cleanup_between_files()
 
-        # Submit all futures to global executor
-        futures = {EXECUTOR.submit(_job, p): p for p in media_files}
-
+        # Per-batch executor, created and shut down here (no module-global state
+        # shared across runs).
+        executor = ThreadPoolExecutor(max_workers=2)
         try:
+            futures = {executor.submit(_job, p): p for p in media_files}
             for future in as_completed(futures):
                 if self._cancel:
                     # Clean up temp files before exiting
@@ -338,6 +336,9 @@ class BatchWorker(QThread):
             LOGGER.error("Batch processing failed: %s", str(exc))
             self.failed.emit(str(exc))
             return
+        finally:
+            # Join the pool threads so none outlive the batch.
+            executor.shutdown(wait=True)
 
         # Final cleanup
         LOGGER.info("Batch processing completed")

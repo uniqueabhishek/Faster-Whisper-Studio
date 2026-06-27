@@ -238,3 +238,12 @@ class MainWindow(QMainWindow):
         """Unlock preprocessing view when transcription completes."""
         LOGGER.info("Transcription finished - unlocking preprocessing view")
         self.preprocessing_view.set_read_only(False)
+
+    def closeEvent(self, event) -> None:
+        """Cancel background work and join worker threads before exiting."""
+        for view in (self.transcription_view, self.preprocessing_view):
+            try:
+                view.shutdown()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        super().closeEvent(event)

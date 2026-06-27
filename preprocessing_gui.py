@@ -619,6 +619,12 @@ class PreprocessingBase(QWidget):
         self._set_busy(True)
         self._worker.start()
 
+    def shutdown(self) -> None:
+        """Cancel running work and join the thread before the app closes."""
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_cancel()
+            self._worker.wait(5000)
+
     def on_skip_preprocessing_clicked(self) -> None:
         """Handle Skip Preprocessing button click."""
         self.transcription_requested.emit([])
