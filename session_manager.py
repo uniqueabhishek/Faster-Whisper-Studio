@@ -313,11 +313,22 @@ class SessionManager:
                 if file_status.path == file_path:
                     old_status = file_status.status
                     file_status.status = status
-                    file_status.error = error
-                    file_status.output_path = output_path
+
+                    # Only overwrite these when a value is supplied, so a
+                    # transition like -> "processing" doesn't wipe a previously
+                    # recorded output_path/error. A successful completion clears
+                    # any earlier error.
+                    if output_path is not None:
+                        file_status.output_path = output_path
+                    if error is not None:
+                        file_status.error = error
+                    elif status == "completed":
+                        file_status.error = None
 
                     now = datetime.now().isoformat()
-                    if status == "processing" and old_status == "pending":
+                    if status == "processing":
+                        # Record (re)start time whenever processing begins,
+                        # including a file resumed from a prior "processing" state.
                         file_status.started_at = now
                     elif status in ("completed", "failed"):
                         file_status.completed_at = now

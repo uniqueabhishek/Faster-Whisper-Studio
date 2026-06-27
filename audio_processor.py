@@ -446,14 +446,20 @@ def trim_silence_vad(
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
 
-        # Resample to 16kHz for VAD if needed
+        # Resample to 16kHz for VAD if needed. Silero VAD assumes 16kHz (fixed
+        # 512-sample window); running it at another rate gives wrong detection,
+        # so if we can't resample, fall back to ffmpeg silence removal rather
+        # than mis-trimming the speech.
         if sample_rate != 16000:
             try:
                 import librosa
                 audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
                 sample_rate = 16000
             except ImportError:
-                LOGGER.warning("librosa not available for resampling, using original sample rate")
+                LOGGER.warning(
+                    "librosa unavailable to resample %dHz -> 16kHz; falling back "
+                    "to ffmpeg silence removal for %s", sample_rate, input_path.name)
+                return _trim_silence_ffmpeg(input_path, output_path, cancel_check)
 
         if cancel_check and cancel_check():
             return False

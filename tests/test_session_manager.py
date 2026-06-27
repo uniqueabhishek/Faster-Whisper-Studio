@@ -86,6 +86,22 @@ def test_delete_session(tmp_path):
     assert mgr.load_session(state.session_id) is None
 
 
+def test_processing_does_not_clobber_output_path(tmp_path):
+    mgr = _mgr(tmp_path)
+    files = [tmp_path / "a.mp3"]
+    state = mgr.create_session(input_files=files, model_path="m")
+    p = str(files[0])
+
+    mgr.update_file_status(state, p, "completed", output_path="out.txt")
+    assert state.files[0].output_path == "out.txt"
+
+    # A later transition that doesn't supply output_path must not wipe it,
+    # and entering "processing" must (re)stamp started_at.
+    mgr.update_file_status(state, p, "processing")
+    assert state.files[0].output_path == "out.txt"
+    assert state.files[0].started_at is not None
+
+
 def test_rejects_tampered_session_id(tmp_path):
     # A planted/copied session.json whose internal id no longer matches the
     # filename must be refused (defense against writing to attacker paths).
