@@ -148,7 +148,7 @@ def convert_to_wav_16khz_mono(
                 if output_path.exists():
                     try:
                         os.unlink(output_path)
-                    except Exception:
+                    except OSError:
                         pass
                 return False
 
@@ -221,7 +221,7 @@ def normalize_audio(
                 if output_path.exists():
                     try:
                         os.unlink(output_path)
-                    except Exception:
+                    except OSError:
                         pass
                 return False
 
@@ -295,7 +295,7 @@ def reduce_noise(
                 if output_path.exists():
                     try:
                         os.unlink(output_path)
-                    except Exception:
+                    except OSError:
                         pass
                 return False
 
@@ -373,7 +373,7 @@ def remove_music(
                 if output_path.exists():
                     try:
                         os.unlink(output_path)
-                    except Exception:
+                    except OSError:
                         pass
                 return False
 
@@ -582,7 +582,7 @@ def _trim_silence_ffmpeg(
                 if output_path.exists():
                     try:
                         os.unlink(output_path)
-                    except Exception:
+                    except OSError:
                         pass
                 return False
 

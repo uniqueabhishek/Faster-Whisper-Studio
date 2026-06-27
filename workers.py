@@ -360,11 +360,16 @@ class BatchWorker(QThread):
                 LOGGER.warning("%d files failed. Session saved for resume.",
                                len(failed_statuses))
 
-        # Report the REAL outcome: successes AND failures, so the batch can no
+        # Report the REAL outcome: successes AND failures (with the recorded
+        # reason per file, so a failure isn't just a count) - the batch can no
         # longer silently claim success when files errored.
         self.finished.emit({
             "results": results,
             "succeeded": len(results),
             "failed": len(failed_statuses),
-            "failed_files": [Path(fs.path).name for fs in failed_statuses],
+            "failed_files": [
+                f"{Path(fs.path).name}: {fs.error}" if fs.error
+                else Path(fs.path).name
+                for fs in failed_statuses
+            ],
         })

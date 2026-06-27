@@ -44,9 +44,9 @@ Our security model relies on three main pillars:
     *   Bundles the Python interpreter and all dependencies into a single `.exe`.
     *   *Weakness*: Python bytecode can be extracted (`pyinstxtractor`) and decompiled.
 *   **PyArmor (Planned/Integrated)**:
-    *   Obfuscates the Python scripts *before* bundling.
-    *   Encrypts the bytecode so it cannot be easily decompiled if extracted.
-    *   **Integration**: We added `pyarmor` to `pyproject.toml`. The build pipeline should run `pyarmor gen` before `pyinstaller`.
+    *   Obfuscates the Python scripts *before* bundling, making the bytecode harder (not impossible) to decompile if extracted.
+    *   **Integration**: `pyarmor` lives in the `[build]` extra in `pyproject.toml`; the hardened build (`build_for_customer.py`) runs `pyarmor gen` before `pyinstaller`.
+    *   **Important**: the build obfuscates **only `license_guard.py`** — `app.py` (which actually *calls* the license check) and every other module ship as ordinary bytecode. See §5 for what this does and does not buy you.
 
 ---
 
@@ -71,3 +71,14 @@ Our security model relies on three main pillars:
 ## 4. Future Improvements
 *   **Online Validation**: (Optional) Check against a server for real-time revocation.
 *   **Anti-Tamper**: Add checksums to ensure `license_guard.py` wasn't modified (PyArmor handles some of this).
+
+## 5. Known Limitations (Honest Threat Model)
+
+The measures above raise the bar against **casual** copying and license sharing, but they are **not** robust against a determined attacker. Be clear-eyed about what they do and don't do:
+
+*   **Enforcement is a single client-side boolean.** `app.py` calls `license_guard.verify_license_gui()` once and exits on failure. `app.py` is **not** obfuscated, so an attacker can patch out that one call (or drop in a stub `license_guard` that returns `True`) without ever touching the PyArmor-protected module — PyArmor here protects the *wrong* file.
+*   **The embedded public key is swappable.** `PUBLIC_KEY_PEM` is a plaintext literal; replacing it lets an attacker sign their own licenses for any machine/expiry (and resell them).
+*   **Expiry can be rolled back offline.** Time comes from NTP but silently falls back to the local clock when NTP is unreachable, so blocking UDP 123 + setting the clock back defeats expiry. There is no persisted anti-rollback timestamp.
+*   **The HWID can degrade.** If WMI/SMBIOS identifiers are unavailable, it falls back to a spoofable hostname+MAC hash.
+
+**Bottom line:** any purely-offline, client-side scheme is bypassable because the trust boundary runs on the attacker's machine. The only change that *meaningfully* raises the bar is **moving verification server-side** — online activation/heartbeat that issues short-lived tokens, with real functionality gated on server-validated state. Treat the current scheme as a deterrent against honest users, not a lock against piracy.
