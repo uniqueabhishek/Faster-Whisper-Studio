@@ -126,10 +126,22 @@ class BatchWorker(QThread):
 
         total = len(self._session.files)
         if total == 0:
-            self.finished.emit([])
+            self.finished.emit(
+                {"results": [], "succeeded": 0, "failed": 0, "failed_files": []})
             return
 
         results: List[TranscriptionResult] = []
+
+        # On resume, seed with files already completed in a prior run so the
+        # final finished() payload reflects the WHOLE batch, not just this run's
+        # newly-processed files. (No-op on a fresh run: completed_files is empty.)
+        for fs in self._session.completed_files:
+            results.append(TranscriptionResult(
+                input_path=Path(fs.path),
+                output_path=Path(fs.output_path) if fs.output_path else None,
+                text="",
+                duration_seconds=0.0,
+            ))
 
         # Calculate already processed count for progress
         already_processed = len(self._session.completed_files) + len(self._session.failed_files)
@@ -337,13 +349,21 @@ class BatchWorker(QThread):
         MemoryManager.cleanup_between_batches()
 
         # Delete session file if all files completed successfully
-        if self._session.is_complete and len(self._session.failed_files) == 0:
+        failed_statuses = self._session.failed_files
+        if self._session.is_complete and len(failed_statuses) == 0:
             LOGGER.info("All files completed successfully. Cleaning up session.")
             self._session_manager.delete_session(self._session.session_id)
         else:
             # Keep session for potential resume
-            failed_count = len(self._session.failed_files)
-            if failed_count > 0:
-                LOGGER.warning("%d files failed. Session saved for resume.", failed_count)
+            if len(failed_statuses) > 0:
+                LOGGER.warning("%d files failed. Session saved for resume.",
+                               len(failed_statuses))
 
-        self.finished.emit(results)
+        # Report the REAL outcome: successes AND failures, so the batch can no
+        # longer silently claim success when files errored.
+        self.finished.emit({
+            "results": results,
+            "succeeded": len(results),
+            "failed": len(failed_statuses),
+            "failed_files": [Path(fs.path).name for fs in failed_statuses],
+        })

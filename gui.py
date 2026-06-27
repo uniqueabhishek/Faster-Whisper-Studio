@@ -802,13 +802,39 @@ class TranscriptionView(QWidget):
     def on_progress(self, percent: int) -> None:
         self.progress_bar.setValue(percent)
 
-    def on_finished(self, results: List[TranscriptionResult]) -> None:
-        LOGGER.info("Transcription completed - %d file(s) processed", len(results))
+    def on_finished(self, summary) -> None:
+        # BatchWorker emits a summary dict; tolerate a bare list defensively.
+        if isinstance(summary, dict):
+            results = summary.get("results", [])
+            failed = summary.get("failed", 0)
+            failed_files = summary.get("failed_files", [])
+        else:
+            results = summary or []
+            failed = 0
+            failed_files = []
+
+        LOGGER.info("Transcription completed - %d succeeded, %d failed",
+                    len(results), failed)
         if self.statusBar():
-            self.statusBar().showMessage(f"Completed. Successfully processed {len(results)} files.")
+            if failed:
+                self.statusBar().showMessage(
+                    f"Completed: {len(results)} succeeded, {failed} failed.")
+            else:
+                self.statusBar().showMessage(
+                    f"Completed. Successfully processed {len(results)} files.")
         self._worker = None
         self._set_busy(False)
         self.progress_bar.setValue(100)
+
+        if failed:
+            # Surface failures rather than implying everything succeeded.
+            listing = "\n".join(failed_files[:20])
+            if len(failed_files) > 20:
+                listing += f"\n... and {len(failed_files) - 20} more"
+            self.show_error(
+                f"{failed} file(s) failed to transcribe:\n\n{listing}\n\n"
+                "See the log for details.")
+
         # Disable UI updates while clearing for better performance
         self.file_list.setUpdatesEnabled(False)
         self.file_list.clear()  # Auto-clear queue
