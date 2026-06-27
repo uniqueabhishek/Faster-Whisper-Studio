@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import sys
 import os
-import math
 import time
 import logging
 import subprocess
@@ -28,106 +26,10 @@ _FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
 try:
     from faster_whisper import WhisperModel
-    import faster_whisper.vad
-    import faster_whisper.transcribe
-
-    # Monkey patch VAD model path for offline use
-    if getattr(sys, 'frozen', False):
-        # If running as a bundled exe, look in the temporary folder
-        _VAD_PATH = Path(sys._MEIPASS) / "assets" / \
-            "silero_vad.onnx"  # pylint: disable=protected-access
-    else:
-        _VAD_PATH = Path(__file__).parent / "assets" / "silero_vad.onnx"
-
-    LOGGER.info("Checking VAD path for patch: %s", _VAD_PATH)
-
-    if _VAD_PATH.exists():
-        import numpy as np
-
-        class SessionWrapper:
-            def __init__(self, session):
-                self._session = session
-                self._inputs = [i.name for i in session.get_inputs()]
-                LOGGER.info("VAD Model inputs: %s", self._inputs)
-
-            def run(self, output_names, input_feed, run_options=None):
-                # Get input audio and batch size
-                audio_input = input_feed.get('input')
-                if audio_input is None:
-                    return self._session.run(output_names, input_feed, run_options)
-
-                batch_size = audio_input.shape[0]
-
-                # 1. Inject sr if missing and required
-                if 'sr' in self._inputs and 'sr' not in input_feed:
-                    input_feed['sr'] = np.array([16000], dtype=np.int64)
-
-                # 2. Prepare h/c
-                # faster_whisper passes state as (1, batch, 128) or similar "old style" shape.
-                # We need to reshape it to (2, batch, 64) for VAD v4.
-                for key in ['h', 'c']:
-                    if key in self._inputs:
-                        if key in input_feed:
-                            val = input_feed[key]
-                            # If it comes in as (1, batch, 128), reshape to (2, batch, 64)
-                            # BUT only if the total size matches!
-                            required_size = 2 * batch_size * 64
-                            if val.ndim == 3 and val.shape[0] == 1 and val.shape[2] == 128 and val.size == required_size:
-                                input_feed[key] = val.reshape(
-                                    2, batch_size, 64)
-                            elif val.shape != (2, batch_size, 64):
-                                # Fallback if shape is weird or size mismatch: reset to zeros
-                                input_feed[key] = np.zeros(
-                                    (2, batch_size, 64), dtype=np.float32)
-                        else:
-                            # Not in input feed, initialize zeros
-                            input_feed[key] = np.zeros(
-                                (2, batch_size, 64), dtype=np.float32)
-
-                # 3. Run session
-                outputs = self._session.run(
-                    output_names, input_feed, run_options)
-
-                # 4. Reshape outputs back to (1, batch, 128) to satisfy faster_whisper
-                # outputs is usually [prob, h, c]
-                if len(outputs) == 3:
-                    prob, h_out, c_out = outputs
-
-                    # Reshape h_out (2, B, 64) -> (1, B, 128)
-                    if h_out.shape == (2, batch_size, 64):
-                        h_out = h_out.reshape(1, batch_size, 128)
-
-                    # Reshape c_out (2, B, 64) -> (1, B, 128)
-                    if c_out.shape == (2, batch_size, 64):
-                        c_out = c_out.reshape(1, batch_size, 128)
-
-                    return [prob, h_out, c_out]
-
-                return outputs
-
-            def get_outputs(self):
-                return self._session.get_outputs()
-
-        def _get_local_vad_model():
-            LOGGER.info("Instantiating local VAD model from: %s", _VAD_PATH)
-            model = faster_whisper.vad.SileroVADModel(str(_VAD_PATH))
-            # Wrap the session to inject 'sr' if needed
-            model.session = SessionWrapper(model.session)
-            return model
-
-        # Patch faster_whisper.vad.get_vad_model
-        if hasattr(faster_whisper.vad, "get_vad_model"):
-            faster_whisper.vad.get_vad_model = _get_local_vad_model
-            LOGGER.info("Patched faster_whisper.vad.get_vad_model")
-
-        # Patch faster_whisper.transcribe.get_vad_model (crucial if it was imported directly)
-        if hasattr(faster_whisper.transcribe, "get_vad_model"):
-            faster_whisper.transcribe.get_vad_model = _get_local_vad_model
-            LOGGER.info("Patched faster_whisper.transcribe.get_vad_model")
-
-    else:
-        LOGGER.warning("VAD model not found at %s. Patch skipped.", _VAD_PATH)
-
+    # faster-whisper ships and uses Silero VAD v6 natively (faster_whisper/
+    # assets/silero_vad_v6.onnx, loaded via get_vad_model()). We no longer
+    # monkey-patch in a bundled v4 model + shim; the v6 asset is pulled into
+    # frozen builds by collect_all('faster_whisper') in the PyInstaller spec.
     LOGGER.info("faster_whisper imported successfully")
 except ImportError as e:
     LOGGER.error("Failed to import faster_whisper: %s", str(e))
@@ -175,39 +77,9 @@ AUDIO_VIDEO_EXTS: tuple[str, ...] = (
 )
 
 
-def format_timestamp(seconds: float) -> str:
-    """Format an absolute position as ``HH:MM:SS.mmm`` (``MM:SS.mmm`` under 1h).
-
-    Rounds to the nearest millisecond. The previous implementation truncated to
-    whole seconds (``int(seconds)``), so every emitted timestamp drifted up to
-    ~1s early and lost all sub-second precision. Used for the per-segment
-    ``[start -> end]`` markers in the transcript.
-    """
-    if seconds is None or not math.isfinite(seconds) or seconds < 0:  # None / NaN / inf / negative
-        seconds = 0.0
-    total_ms = int(round(seconds * 1000))
-    hours, rem = divmod(total_ms, 3_600_000)
-    minutes, rem = divmod(rem, 60_000)
-    secs, millis = divmod(rem, 1000)
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
-    return f"{minutes:02d}:{secs:02d}.{millis:03d}"
-
-
-def format_duration(seconds: float) -> str:
-    """Format an elapsed duration as ``HH:MM:SS``, rounded to the nearest second.
-
-    Used for the human-readable report fields (total/processed/processing time)
-    where millisecond precision would only add noise.
-    """
-    if seconds is None or not math.isfinite(seconds) or seconds < 0:  # None / NaN / inf / negative
-        seconds = 0.0
-    total_secs = int(round(seconds))
-    hours, rem = divmod(total_secs, 3600)
-    minutes, secs = divmod(rem, 60)
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
+# Re-exported from the dependency-free ``formatters`` module so existing callers
+# (and tests) that do ``from transcriber import format_duration`` keep working.
+from formatters import format_timestamp, format_duration  # noqa: E402  pylint: disable=wrong-import-position
 
 
 def detect_device() -> str:
@@ -368,8 +240,7 @@ class Transcriber:
             os.close(fd)
             temp_path = Path(temp_path)
 
-            LOGGER.info("Repairing audio with ffmpeg: %s -> %s",
-                        input_path.name, temp_path.name)
+            LOGGER.info("Preparing audio (converting to 16kHz mono WAV)...")
 
             # ffmpeg -i input -ar 16000 -ac 1 -c:a pcm_s16le output.wav
             cmd = [
@@ -411,7 +282,7 @@ class Transcriber:
                     "ffmpeg failed with return code: %d", process.returncode)
                 return None
 
-            LOGGER.info("Audio repair successful.")
+            LOGGER.info("Audio prepared.")
             return temp_path
 
         except Exception as e:  # pylint: disable=broad-except
@@ -553,7 +424,8 @@ class Transcriber:
 
             if not silence_pairs:
                 LOGGER.info(
-                    "No silence found in window %.1f-%.1f. Using hard split.", start_search, actual_search_end)
+                    "No silence found in window %s-%s. Using hard split.",
+                    format_duration(start_search), format_duration(actual_search_end))
                 return fallback_split
 
             # When using -ss before -i, ffmpeg resets filter timestamps to 0
@@ -575,7 +447,8 @@ class Transcriber:
 
             final_split_time = start_search + best_relative_time
             LOGGER.info(
-                "Smart split found at %.2fs (Silence duration: %.2fs)", final_split_time, best_silence[1])
+                "Smart split found at %s (silence %.1fs)",
+                format_duration(final_split_time), best_silence[1])
             return final_split_time
 
         except Exception as e:  # pylint: disable=broad-except
@@ -635,7 +508,9 @@ class Transcriber:
             chunk_duration = split_point - current_time
 
             LOGGER.info(
-                "Processing chunk: %.1f - %.1f (Duration: %.1f)", current_time, split_point, chunk_duration)
+                "Processing chunk: %s - %s (duration %s)",
+                format_duration(current_time), format_duration(split_point),
+                format_duration(chunk_duration))
 
             temp_chunk = self._slice_audio(
                 input_path, current_time, chunk_duration, cancel_check=cancel_check)
@@ -644,7 +519,7 @@ class Transcriber:
                 # while the caller still marks the file "completed". Fail loudly
                 # so the file is recorded as failed instead of partially-done.
                 raise RuntimeError(
-                    f"Failed to create audio slice at {current_time:.1f}s. "
+                    f"Failed to create audio slice at {format_duration(current_time)}. "
                     "Aborting chunked transcription to avoid silent truncation.")
 
             try:
@@ -680,7 +555,7 @@ class Transcriber:
 
             except Exception as e:  # pylint: disable=broad-except
                 LOGGER.error(
-                    "Error processing chunk starting at %.1f: %s", current_time, e)
+                    "Error processing chunk starting at %s: %s", format_duration(current_time), e)
                 # Try to continue if possible, or raise if critical
                 # For memory error, we really want to stop or retry smaller?
                 # Since we are already chunking, raising is appropriate.
@@ -722,15 +597,15 @@ class Transcriber:
             return 0.0, False, None
 
         duration_minutes = full_duration / 60
-        LOGGER.info("Audio duration: %.1f minutes", duration_minutes)
         if duration_minutes > 40:
             LOGGER.info(
-                "Long audio detected (%.1f min). Using Smart Chunking (physical "
-                "splitting) to prevent memory errors.", duration_minutes)
+                "Audio duration: %s - long file, using smart chunking "
+                "(physical splitting) to prevent memory errors.",
+                format_duration(full_duration))
             return full_duration, True, None
 
-        LOGGER.info("Normal duration file (%.1f min). Standard processing.",
-                    duration_minutes)
+        LOGGER.info("Audio duration: %s - standard processing.",
+                    format_duration(full_duration))
         return full_duration, False, None
 
     def _build_transcribe_kwargs(self, lang, bs, vad_filter, initial_prompt,
@@ -837,7 +712,8 @@ class Transcriber:
         lines: List[str] = []
         ai_processed_duration = 0.0
         last_progress = -1
-        last_log_time = time.time()
+        render_start = time.time()
+        last_log_time = render_start
 
         for segment in segments:
             # Honor cancellation between segments. faster-whisper streams
@@ -846,12 +722,16 @@ class Transcriber:
             if cancel_check and cancel_check():
                 raise Exception("Cancelled")
 
-            # Log progress every 60 seconds.
+            # Log progress every 60 seconds, with elapsed time and an ETA so a
+            # long transcription shows how far along it is and how long is left.
             if time.time() - last_log_time >= 60.0:
                 audio_progress = segment.end if hasattr(segment, 'end') else 0
-                progress_pct = (audio_progress / total_duration *
-                                100) if total_duration > 0 else 0
-                LOGGER.info("Progress: %.0f%% complete", progress_pct)
+                frac = (audio_progress / total_duration) if total_duration > 0 else 0
+                elapsed = time.time() - render_start
+                eta_str = format_duration(
+                    elapsed / frac - elapsed) if frac > 0.01 else "--:--"
+                LOGGER.info("Progress: %3.0f%%  |  elapsed %s  |  ETA %s",
+                            frac * 100, format_duration(elapsed), eta_str)
                 last_log_time = time.time()
 
             ai_processed_duration += (segment.end - segment.start)
@@ -948,8 +828,6 @@ class Transcriber:
             lang, bs, vad_filter, initial_prompt, task, patience, cancel_check)
         total_duration = info.duration
 
-        LOGGER.info("Processing audio (Duration: %s)",
-                    format_duration(total_duration))
         lines, ai_processed_duration = self._render_segments(
             segments, total_duration, add_timestamps, progress_callback, cancel_check)
         text = "\n".join(lines)

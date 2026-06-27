@@ -11,17 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable
 
-# Import transcriber to ensure VAD model patches are applied
-# This MUST be imported before any faster_whisper.vad imports
-try:
-    import transcriber  # noqa: F401
-    LOGGER = logging.getLogger(__name__)
-    LOGGER.info("Transcriber imported - VAD patches applied")
-except ImportError:
-    LOGGER = logging.getLogger(__name__)
-    LOGGER.warning("Could not import transcriber - VAD may not work correctly")
+LOGGER = logging.getLogger(__name__)
 
 from ffmpeg_utils import get_ffmpeg_path
+from formatters import format_duration
 
 # Prefer a bundled ffmpeg (assets/ffmpeg/); fall back to PATH, then the bare name.
 _FFMPEG = get_ffmpeg_path() or "ffmpeg"
@@ -406,7 +399,7 @@ def trim_silence_vad(
     """
     Use VAD (Voice Activity Detection) to remove silence segments from audio.
     This concatenates all detected speech segments, removing silence from anywhere in the audio.
-    Reuses the existing silero_vad.onnx model.
+    Uses faster-whisper's native Silero VAD (v6) via get_speech_timestamps.
 
     Args:
         input_path: Path to input audio file
@@ -428,7 +421,7 @@ def trim_silence_vad(
             import numpy as np
             import soundfile as sf
 
-            # Import VAD functions (reuse existing patch from transcriber.py)
+            # faster-whisper's native Silero VAD v6 (no app-side patch).
             from faster_whisper.vad import get_speech_timestamps, VadOptions
 
         except ImportError as e:
@@ -507,8 +500,9 @@ def trim_silence_vad(
             speech_chunk = audio[start_sample:end_sample]
             speech_segments.append(speech_chunk)
 
-            LOGGER.debug("Segment %d: %.2fs - %.2fs (duration: %.2fs)",
-                        i + 1, start_sample / sample_rate, end_sample / sample_rate,
+            LOGGER.debug("Segment %d: %s - %s (duration: %.2fs)",
+                        i + 1, format_duration(start_sample / sample_rate),
+                        format_duration(end_sample / sample_rate),
                         (end_sample - start_sample) / sample_rate)
 
         # Concatenate all speech segments, then free the full-audio buffer and
@@ -524,8 +518,8 @@ def trim_silence_vad(
         sf.write(str(output_path), trimmed_audio, sample_rate)
 
         duration_removed = (original_len - len(trimmed_audio)) / sample_rate
-        LOGGER.info("Removed %.2f seconds of silence from %s (kept %d speech segments)",
-                   duration_removed, input_path.name, len(speech_timestamps))
+        LOGGER.info("Removed %s of silence from %s (kept %d speech segments)",
+                   format_duration(duration_removed), input_path.name, len(speech_timestamps))
         return True
 
     except Exception as e:

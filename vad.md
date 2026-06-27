@@ -7,27 +7,32 @@ Its primary job is to "listen" to the audio first and cut out all the silence, s
 
 ---
 
-## The Technical Challenge: Why it wasn't working
-We encountered a **Deep Compatibility Mismatch** between the installed `faster-whisper` library and the available Silero VAD models.
+## How VAD is integrated
+This project uses **faster-whisper's native Silero VAD (v6)** — the
+`silero_vad_v6.onnx` model that ships inside the `faster-whisper` package and is
+loaded by its own `get_vad_model()` / `SileroVADModel`. There is no app-side VAD
+model file and no runtime patching: we call `faster_whisper.vad.get_speech_timestamps`
+and let the library run its bundled model.
 
-1.  **The Library's Behavior**: The installed version of `faster-whisper` was designed for an older VAD interface. It was sending audio data in a specific shape (`Batch Size x 1 x 128`) and, critically, was **not** sending the Sample Rate (`sr`) parameter.
-2.  **The Model's Requirement**: The modern Silero VAD models (v4 and v5) are stricter. They **require** the `sr` parameter to be present and expect a different input tensor shape (`2 x Batch Size x 64`).
-3.  **The Crash**: When the library tried to run the model, it failed with `ValueError: Required inputs (['sr']) are missing` and `ONNXRuntimeError` due to the shape mismatch.
+The v6 asset is pulled into frozen (PyInstaller) builds automatically by
+`collect_all('faster_whisper')` in `FasterWhisperGUI.spec`, so offline use works
+without shipping a separate copy.
 
 ---
 
-## The Solution: A Custom Neural Adapter
-Instead of downgrading the library or using an inferior, obsolete model, we engineered a robust **Runtime Adapter** (`SessionWrapper` class in `transcriber.py`).
+## History: the retired v4 adapter
+Earlier builds bundled an older **Silero VAD v4** model (`assets/silero_vad.onnx`)
+and monkey-patched `faster_whisper.vad.get_vad_model` to load it through a custom
+`SessionWrapper` adapter in `transcriber.py`. At the time, the library and the
+available v4 model disagreed on the calling convention — the model **required** the
+`sr` input and a `2 x Batch x 64` hidden-state shape, while the library sent neither
+in that form — so the adapter injected `sr` and reshaped the `h`/`c` tensors to
+bridge the gap.
 
-This adapter acts as a smart bridge between the library and the model:
-1.  **Dynamic Interception**: It intercepts the call from the library to the VAD model.
-2.  **Tensor Reshaping**: It detects the incoming tensor shape (e.g., from a 10,000-chunk batch) and mathematically reshapes it to the format the VAD v4 model expects.
-3.  **Parameter Injection**: It automatically injects the missing `sr` (Sample Rate) input (set to 16000 Hz) that the model demands.
-4.  **State Management**: It handles the model's internal state (h/c tensors), ensuring that even when processing huge batches, the model receives the correct initialization zeros.
-5.  **Precision Tuning**: We further tuned the VAD parameters to ensure high recall:
-    -   **Threshold**: `0.35` (Increased sensitivity to catch quiet voices).
-    -   **Min Silence**: `1000ms` (Prevents cutting audio during natural pauses).
-    -   **Padding**: `400ms` (Preserves the breath/start of words).
+That shim was removed once `faster-whisper` shipped Silero VAD **v6** and called it
+with a matching interface (batched `[N, 576]` windows, `h`/`c` of `[1, 1, 128]`, no
+`sr`). Running the native v6 model directly is both more accurate and far simpler —
+it deleted ~90 lines of fragile reshaping code and a separately-downloaded model.
 
 ---
 

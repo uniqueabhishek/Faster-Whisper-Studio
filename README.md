@@ -264,8 +264,7 @@ Faster-Whisper_GUI_APP/
 ├── preprocessing_config_dialogs.py # Configuration dialogs
 ├── styles.py                       # Dark theme and styling
 ├── requirements.txt                # Python dependencies
-├── assets/                         # Icons and resources
-│   └── silero_vad.onnx            # VAD model
+├── assets/                         # Icons, screenshots, VC++ redistributable
 └── build_exe.py                    # Build script for executable
 ```
 
@@ -324,7 +323,7 @@ texts and notices, and Qt/FFmpeg must remain dynamically linked and replaceable
 
 - **OpenAI Whisper**: Original speech recognition model
 - **faster-whisper**: Efficient Whisper implementation
-- **Silero VAD**: Voice activity detection model
+- **Silero VAD (v6)**: Voice activity detection model (bundled with faster-whisper)
 - **DeepFilterNet**: Noise reduction model
 - **Demucs**: Music source separation
 
