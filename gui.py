@@ -377,13 +377,23 @@ class TranscriptionView(QWidget):
             QPushButton {
                 background-color: #ef4444;
                 color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 8px;
+                font-weight: 600;
+                border: 1px solid #ef4444;
+                border-radius: 8px;
+                padding: 9px 18px;
+            }
+            QPushButton:hover {
+                background-color: #dc2626;
+                border-color: #f87171;
+            }
+            QPushButton:pressed {
+                background-color: #b91c1c;
+                border-color: #b91c1c;
             }
             QPushButton:disabled {
-                background-color: #d1d5db;
-                color: #9ca3af;
+                background-color: #262626;
+                border-color: #333333;
+                color: #6b7280;
             }
         """)
         self.cancel_btn.clicked.connect(self.on_cancel_clicked)

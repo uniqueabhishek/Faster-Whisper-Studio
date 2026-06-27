@@ -106,32 +106,69 @@ QComboBox QAbstractItemView {
     border: 1px solid #404040;
 }
 
-/* Buttons */
+/* Primary Buttons — the main call-to-action (solid blue) */
 QPushButton {
     background-color: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-weight: bold;
+    color: #ffffff;
+    border: 1px solid #3b82f6;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-weight: 600;
 }
 QPushButton:hover {
     background-color: #2563eb;
+    border-color: #60a5fa;
 }
 QPushButton:pressed {
     background-color: #1d4ed8;
+    border-color: #1d4ed8;
 }
 QPushButton:disabled {
-    background-color: #4b5563;
-    color: #9ca3af;
+    background-color: #262626;
+    border-color: #333333;
+    color: #6b7280;
 }
 
-/* Secondary Buttons (Browse, etc) */
+/* Secondary Buttons (Browse, Add Files, …) — quiet outline style */
 QPushButton#SecondaryBtn {
-    background-color: #4b5563;
+    background-color: transparent;
+    color: #d1d5db;
+    border: 1px solid #404040;
 }
 QPushButton#SecondaryBtn:hover {
-    background-color: #6b7280;
+    background-color: #2d2d2d;
+    border-color: #3b82f6;
+    color: #ffffff;
+}
+QPushButton#SecondaryBtn:pressed {
+    background-color: #262626;
+    border-color: #2563eb;
+}
+QPushButton#SecondaryBtn:disabled {
+    background-color: transparent;
+    border-color: #333333;
+    color: #6b7280;
+}
+
+/* Settings (gear) buttons — circular icon button (fixed 30x30).
+   padding:0 keeps the base 8px 16px padding from clipping the ⚙ glyph. */
+QPushButton#SettingsBtn {
+    background-color: #2d2d2d;
+    color: #9ca3af;
+    border: 1px solid #404040;
+    border-radius: 15px;
+    padding: 0;
+    font-size: 16px;
+    font-weight: bold;
+}
+QPushButton#SettingsBtn:hover {
+    background-color: #374151;
+    border-color: #3b82f6;
+    color: #ffffff;
+}
+QPushButton#SettingsBtn:pressed {
+    background-color: #1f2937;
+    border-color: #2563eb;
 }
 
 /* Text Area (Logs/Output) */
@@ -188,6 +225,46 @@ QListWidget::item {
 QListWidget::item:selected {
     background-color: #374151;
     border-radius: 4px;
+}
+
+/* Checkboxes & Radio Buttons
+   The broad `QWidget { background-color }` rule above puts every checkbox/radio
+   into stylesheet-drawn mode, which disables the native indicator. Without an
+   explicit ::indicator rule the checked/unchecked states render identically, so
+   clicking looks like nothing happens. Re-supply a visible indicator here. */
+QCheckBox, QRadioButton {
+    background-color: transparent;
+    color: #e5e7eb;
+    spacing: 8px;
+}
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #6b7280;
+    background-color: #2d2d2d;
+}
+QCheckBox::indicator {
+    border-radius: 4px;
+}
+QRadioButton::indicator {
+    border-radius: 11px; /* circular */
+}
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {
+    border-color: #3b82f6;
+}
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+    background-color: #3b82f6;
+    border-color: #2563eb;
+}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    border-color: #4b5563;
+}
+QCheckBox::indicator:checked:disabled, QRadioButton::indicator:checked:disabled {
+    background-color: #3b82f6;
+    border-color: #2563eb;
+}
+QCheckBox:disabled, QRadioButton:disabled {
+    color: #9ca3af;
 }
 
 /* Labels */

@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QSettings, Signal, QObject
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -42,7 +43,7 @@ from preprocessing_config_dialogs import (
 
 from ui_common import (
     MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window,
-    settings_bool, settings_int,
+    settings_bool, settings_int, make_settings_button,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -168,10 +169,7 @@ class PreprocessingBase(QWidget):
         convert_row.addWidget(self.convert_check)
         convert_row.addStretch()
 
-        convert_settings_btn = QPushButton("⚙")
-        convert_settings_btn.setObjectName("SettingsBtn")
-        convert_settings_btn.setFixedSize(30, 30)
-        convert_settings_btn.setToolTip("Configure WAV conversion parameters")
+        convert_settings_btn = make_settings_button("Configure WAV conversion parameters")
         convert_settings_btn.clicked.connect(self._on_wav_settings_clicked)
         convert_row.addWidget(convert_settings_btn)
 
@@ -185,10 +183,7 @@ class PreprocessingBase(QWidget):
         noise_row.addWidget(self.noise_check)
         noise_row.addStretch()
 
-        noise_settings_btn = QPushButton("⚙")
-        noise_settings_btn.setObjectName("SettingsBtn")
-        noise_settings_btn.setFixedSize(30, 30)
-        noise_settings_btn.setToolTip("Configure noise reduction parameters")
+        noise_settings_btn = make_settings_button("Configure noise reduction parameters")
         noise_settings_btn.clicked.connect(self._on_noise_settings_clicked)
         noise_row.addWidget(noise_settings_btn)
 
@@ -207,10 +202,7 @@ class PreprocessingBase(QWidget):
         music_row.addWidget(self.music_check)
         music_row.addStretch()
 
-        music_settings_btn = QPushButton("⚙")
-        music_settings_btn.setObjectName("SettingsBtn")
-        music_settings_btn.setFixedSize(30, 30)
-        music_settings_btn.setToolTip("Configure music removal filter frequencies")
+        music_settings_btn = make_settings_button("Configure music removal filter frequencies")
         music_settings_btn.clicked.connect(self._on_music_settings_clicked)
         music_row.addWidget(music_settings_btn)
 
@@ -242,10 +234,9 @@ class PreprocessingBase(QWidget):
         normalize_layout.addWidget(self.db_slider)
         normalize_layout.setStretch(3, 1)  # Make slider expand
 
-        normalize_settings_btn = QPushButton("⚙")
-        normalize_settings_btn.setObjectName("SettingsBtn")
-        normalize_settings_btn.setFixedSize(30, 30)
-        normalize_settings_btn.setToolTip("Configure normalization parameters (target loudness, true peak, loudness range)")
+        normalize_settings_btn = make_settings_button(
+            "Configure normalization parameters (target loudness, true peak, loudness range)"
+        )
         normalize_settings_btn.clicked.connect(self._on_normalize_settings_clicked)
         normalize_layout.addWidget(normalize_settings_btn)
 
@@ -264,10 +255,7 @@ class PreprocessingBase(QWidget):
         trim_row.addWidget(self.trim_check)
         trim_row.addStretch()
 
-        trim_settings_btn = QPushButton("⚙")
-        trim_settings_btn.setObjectName("SettingsBtn")
-        trim_settings_btn.setFixedSize(30, 30)
-        trim_settings_btn.setToolTip("Configure VAD silence trimming parameters")
+        trim_settings_btn = make_settings_button("Configure VAD silence trimming parameters")
         trim_settings_btn.clicked.connect(self._on_vad_settings_clicked)
         trim_row.addWidget(trim_settings_btn)
 
@@ -364,12 +352,23 @@ class PreprocessingBase(QWidget):
             QPushButton {
                 background-color: #ef4444;
                 color: white;
-                font-weight: bold;
-                border-radius: 4px;
+                font-weight: 600;
+                border: 1px solid #ef4444;
+                border-radius: 8px;
+                padding: 9px 18px;
+            }
+            QPushButton:hover {
+                background-color: #dc2626;
+                border-color: #f87171;
+            }
+            QPushButton:pressed {
+                background-color: #b91c1c;
+                border-color: #b91c1c;
             }
             QPushButton:disabled {
-                background-color: #d1d5db;
-                color: #9ca3af;
+                background-color: #262626;
+                border-color: #333333;
+                color: #6b7280;
             }
         """)
         self.cancel_btn.clicked.connect(self.on_cancel_clicked)
@@ -463,7 +462,7 @@ class PreprocessingBase(QWidget):
             current_channels=self.wav_config['wav_channels'],
             current_bit_depth=self.wav_config['wav_bit_depth']
         )
-        if dialog.exec() == 2:  # QDialog.Accepted
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.wav_config.update(dialog.get_values())
             LOGGER.info("WAV conversion config updated: %s", self.wav_config)
 
@@ -475,7 +474,7 @@ class PreprocessingBase(QWidget):
             current_nf=self.noise_config['noise_reduction_nf'],
             current_gs=self.noise_config['noise_reduction_gs']
         )
-        if dialog.exec() == 2:  # QDialog.Accepted
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.noise_config.update(dialog.get_values())
             LOGGER.info("Noise reduction config updated: %s", self.noise_config)
 
@@ -486,7 +485,7 @@ class PreprocessingBase(QWidget):
             current_highpass=self.music_config['music_highpass_freq'],
             current_lowpass=self.music_config['music_lowpass_freq']
         )
-        if dialog.exec() == 2:  # QDialog.Accepted
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.music_config.update(dialog.get_values())
             LOGGER.info("Music removal config updated: %s", self.music_config)
 
@@ -498,7 +497,7 @@ class PreprocessingBase(QWidget):
             current_tp=self.normalize_config['normalize_true_peak'],
             current_lra=self.normalize_config['normalize_loudness_range']
         )
-        if dialog.exec() == 2:  # QDialog.Accepted
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.normalize_config.update(dialog.get_values())
             # Update the slider and label to reflect the new target_db
             self.db_slider.setValue(int(self.normalize_config['normalize_target_db']))
@@ -512,7 +511,7 @@ class PreprocessingBase(QWidget):
             current_speech_pad=self.vad_config['vad_speech_pad_ms'],
             current_threshold=self.vad_config['vad_threshold']
         )
-        if dialog.exec() == 2:  # QDialog.Accepted
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.vad_config.update(dialog.get_values())
             LOGGER.info("VAD config updated: %s", self.vad_config)
 
@@ -787,26 +786,10 @@ class PreprocessingWindow(QMainWindow):
         self.setWindowTitle("Audio Preprocessing - New Window")
         self.setWindowFlags(Qt.Window)  # type: ignore[attr-defined] # Make it a proper window
 
-        # Apply Dark Theme
+        # Apply Dark Theme (SettingsBtn styling now lives in DARK_THEME_QSS)
         app = QApplication.instance()
         if app:
-            settings_btn_style = """
-                QPushButton#SettingsBtn {
-                    background-color: #3b82f6;
-                    color: white;
-                    border: none;
-                    border-radius: 15px;
-                    font-size: 16px;
-                    font-weight: bold;
-                }
-                QPushButton#SettingsBtn:hover {
-                    background-color: #2563eb;
-                }
-                QPushButton#SettingsBtn:pressed {
-                    background-color: #1d4ed8;
-                }
-            """
-            app.setStyleSheet(DARK_THEME_QSS + settings_btn_style)  # type: ignore[attr-defined]
+            app.setStyleSheet(DARK_THEME_QSS)  # type: ignore[attr-defined]
 
         # Apply Windows Dark Title Bar
         apply_dark_title_bar(int(self.winId()))

@@ -12,11 +12,12 @@ import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QSize
 from PySide6.QtGui import QCursor, QDragEnterEvent, QDropEvent, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
+    QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -43,6 +44,24 @@ def resource_path(*parts: str) -> Path:
     else:
         base = Path(__file__).parent
     return base.joinpath(*parts)
+
+
+def make_settings_button(tooltip: str = "") -> QPushButton:
+    """Create a circular ⚙ settings button with a crisp, centered gear icon.
+
+    Uses a real SVG icon rather than the ⚙ text glyph: font glyphs for the gear
+    character render off-center on most platforms, whereas an icon is centered by
+    Qt regardless of font metrics. Styled by the ``#SettingsBtn`` rule in the theme.
+    """
+    btn = QPushButton()
+    btn.setObjectName("SettingsBtn")
+    btn.setFixedSize(30, 30)
+    btn.setIcon(QIcon(str(resource_path("assets", "gear.svg"))))
+    btn.setIconSize(QSize(16, 16))
+    btn.setCursor(QCursor(Qt.PointingHandCursor))  # type: ignore[attr-defined]
+    if tooltip:
+        btn.setToolTip(tooltip)
+    return btn
 
 
 def app_icon() -> QIcon:
