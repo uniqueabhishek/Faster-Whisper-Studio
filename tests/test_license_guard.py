@@ -8,6 +8,7 @@ HWID fallback helper.
 
 import json
 import base64
+from datetime import datetime, timedelta
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
@@ -78,3 +79,31 @@ def test_foreign_key_cannot_verify():
     except InvalidSignature:
         raised = True
     assert raised, "a signature must not verify under a different public key"
+
+
+def test_anti_rollback_state_roundtrip_and_machine_binding(tmp_path):
+    p = str(tmp_path / "state")
+    when = datetime(2027, 1, 1, 12, 0, 0)
+    license_guard._write_last_seen("hwid-A", when, path=p)
+    assert license_guard._read_last_seen("hwid-A", path=p) == when
+    # A different machine's HWID can't validate the same state file.
+    assert license_guard._read_last_seen("hwid-B", path=p) is None
+
+
+def test_anti_rollback_state_rejects_tampered_date(tmp_path):
+    p = str(tmp_path / "state")
+    license_guard._write_last_seen("hwid-A", datetime(2027, 1, 1), path=p)
+    with open(p, encoding="utf-8") as f:
+        doc = json.load(f)
+    doc["ts"] = doc["ts"] - 99999  # move the date back without fixing the MAC
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(doc, f)
+    assert license_guard._read_last_seen("hwid-A", path=p) is None
+
+
+def test_is_rollback_logic():
+    base = datetime(2027, 6, 1)
+    assert license_guard._is_rollback(base - timedelta(days=30), base) is True
+    assert license_guard._is_rollback(base, base) is False
+    assert license_guard._is_rollback(base - timedelta(hours=2), base) is False  # within grace
+    assert license_guard._is_rollback(base, None) is False  # first run

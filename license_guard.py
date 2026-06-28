@@ -2,11 +2,13 @@ import os
 import json
 import logging
 import hashlib
+import hmac
+import tempfile
 import wmi
 import base64
 import ntplib
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from PySide6.QtWidgets import QMessageBox
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
@@ -19,6 +21,53 @@ MCowBQYDK2VwAyEAnT7y+CZ4m+2vzVbvuU4ydAKDBzUDMnnzF7ElUQFXed4=
 -----END PUBLIC KEY-----
 """
 LICENSE_FILE = "license.dat"
+
+# --- Anti-rollback state (offline clock-rollback defense) ---
+# Not a real secret (it ships in the binary), but binding the HMAC to it AND the
+# machine HWID raises the bar above trivially editing a stored date or copying
+# the state file between machines.
+_ROLLBACK_SECRET = b"fwgui-anti-rollback-v1"
+# Tolerance so a small, benign clock correction doesn't trip the guard.
+_ROLLBACK_GRACE = timedelta(days=1)
+
+
+def _state_path() -> str:
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    directory = os.path.join(base, "FasterWhisperGUI")
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, ".state")
+
+
+def _state_mac(hwid: str, ts: float) -> str:
+    key = hashlib.sha256(_ROLLBACK_SECRET + hwid.encode()).digest()
+    return hmac.new(key, repr(ts).encode(), hashlib.sha256).hexdigest()
+
+
+def _read_last_seen(hwid: str, path=None):
+    """Return the stored high-water-mark time, or None if absent/tampered."""
+    try:
+        with open(path or _state_path(), "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        ts = float(doc["ts"])
+        if not hmac.compare_digest(doc.get("mac", ""), _state_mac(hwid, ts)):
+            return None  # tampered, or copied from another machine
+        return datetime.fromtimestamp(ts)
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
+def _write_last_seen(hwid: str, dt: datetime, path=None) -> None:
+    try:
+        ts = dt.timestamp()
+        with open(path or _state_path(), "w", encoding="utf-8") as f:
+            json.dump({"ts": ts, "mac": _state_mac(hwid, ts)}, f)
+    except OSError:
+        pass
+
+
+def _is_rollback(current: datetime, last_seen, grace: timedelta = _ROLLBACK_GRACE) -> bool:
+    """True if the clock appears set backwards relative to the last-seen time."""
+    return last_seen is not None and current < last_seen - grace
 
 
 def _legacy_machine_id():
@@ -135,9 +184,28 @@ def verify_license_gui():
                 "License Error", f"This license works on a different machine.\n\nRequired: {data['machine_id']}\nCurrent: {current_hwid}")
             sys.exit(1)
 
-        # Verify Expiry
+        # Verify Expiry (with offline clock-rollback defense).
         expiry_date = datetime.strptime(data["expiry"], "%Y-%m-%d")
-        current_time = get_network_time() or datetime.now()
+
+        ntp_time = get_network_time()
+        if ntp_time is not None:
+            # Online: NTP is authoritative and a rolled-back local clock is moot.
+            current_time = ntp_time
+            _write_last_seen(current_hwid, current_time)
+        else:
+            # Offline: trust the local clock only if it hasn't moved backwards
+            # below the last time we ran (which is how expiry gets defeated).
+            current_time = datetime.now()
+            last_seen = _read_last_seen(current_hwid)
+            if _is_rollback(current_time, last_seen):
+                show_error(
+                    "License Error",
+                    "Could not verify the date online, and the system clock appears to "
+                    "have moved backwards.\n\nPlease connect to the internet, or set your "
+                    "clock to the correct date and time, then try again.")
+                sys.exit(1)
+            _write_last_seen(
+                current_hwid, max(current_time, last_seen) if last_seen else current_time)
 
         if current_time > expiry_date:
             show_error("Subscription Expired",
