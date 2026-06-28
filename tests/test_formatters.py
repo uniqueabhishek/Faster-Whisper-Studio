@@ -11,25 +11,30 @@ from transcriber import (
 def test_resolve_quality_depth_mapping():
     assert resolve_quality("Fast Analysis (int8)") == {
         "compute_type": "int8", "beam_size": 5, "patience": 1.0}
-    assert resolve_quality("Precise Analysis (float32)") == {
+    assert resolve_quality("Precise Analysis") == {
         "compute_type": "float32", "beam_size": 5, "patience": 1.0}
-    assert resolve_quality("Deep Analysis (float32)") == {
+    assert resolve_quality("Deep Analysis") == {
         "compute_type": "float32", "beam_size": 10, "patience": 2.0}
 
 
-def test_resolve_quality_gpu_promotes_int8_to_float16():
+def test_resolve_quality_gpu_uses_float16():
+    # On CUDA every preset runs float16: int8 is unsupported on GPU and float16
+    # halves VRAM vs float32 (the only way large-v3-turbo fits a small card).
+    # beam_size still distinguishes the presets.
     assert resolve_quality("Fast Analysis (int8)", "cuda")["compute_type"] == "float16"
-    # float32 paths are unchanged on GPU.
-    assert resolve_quality("Deep Analysis (float32)", "cuda")["compute_type"] == "float32"
+    assert resolve_quality("Precise Analysis", "cuda")["compute_type"] == "float16"
+    assert resolve_quality("Deep Analysis", "cuda")["compute_type"] == "float16"
+    assert resolve_quality("Deep Analysis", "cuda")["beam_size"] == 10
 
 
-def test_cpu_compute_type_always_int8_on_fallback():
-    # A GPU load only fails when the model is too big for VRAM, so the CPU
-    # fallback always uses int8 — keeping system RAM free for the full-file STFT
-    # (loading float32 on CPU regressed long files into a MemoryError).
-    assert cpu_compute_type("float16") == "int8"
-    assert cpu_compute_type("int8_float16") == "int8"
-    assert cpu_compute_type("float32") == "int8"
+def test_cpu_compute_type_prefers_quality_on_fallback():
+    # CPU is reached only after the GPU ladder (requested precision ->
+    # int8_float16) is exhausted, so GPU machines stay on the GPU. When we do
+    # land on CPU the user wants best quality, so GPU-only types map to float32;
+    # an explicit int8 (Fast) choice is preserved.
+    assert cpu_compute_type("float16") == "float32"
+    assert cpu_compute_type("int8_float16") == "float32"
+    assert cpu_compute_type("float32") == "float32"
     assert cpu_compute_type("int8") == "int8"
 
 

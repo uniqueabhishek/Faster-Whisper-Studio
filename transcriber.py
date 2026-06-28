@@ -12,6 +12,8 @@ import re
 import shutil
 import wave
 import tempfile
+import ctypes
+import functools
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
@@ -24,6 +26,26 @@ LOGGER = logging.getLogger(__name__)
 # Prefer a bundled ffmpeg (assets/ffmpeg/); fall back to PATH, then the bare name
 # so behavior degrades to the previous PATH lookup when nothing is bundled.
 _FFMPEG = get_ffmpeg_path() or "ffmpeg"
+
+# --- GPU usability gate ----------------------------------------------------
+# A CUDA device is only worth using if it can actually run large-v3-turbo: it
+# needs room for the float16 weights (~770 MB) plus the CUDA/cuDNN context and
+# beam-search activations, which together exceed the 2 GB on small laptop GPUs
+# (they OOM at load). 4 GB cleanly excludes such cards while admitting real
+# discrete GPUs.
+MIN_CUDA_VRAM_BYTES = 4 * 1024 ** 3
+
+# --- CPU smart-chunking knobs ----------------------------------------------
+# CPU float32 keeps the full-size model resident in RAM, so faster-whisper's
+# full-file STFT can OOM on long files. On CPU we chunk far earlier and far
+# smaller than on GPU (where VRAM holds the model and full-file processing is
+# fine).
+CPU_CHUNK_THRESHOLD_MIN = 8     # minutes; CPU files longer than this get chunked
+CPU_MIN_CHUNK_DURATION = 120    # 2 min (GPU/very-long path keeps MIN_CHUNK_DURATION)
+CPU_MAX_CHUNK_DURATION = 300    # 5 min (GPU/very-long path keeps MAX_CHUNK_DURATION)
+# If a chunk still hits a MemoryError, halve it and retry down to this floor
+# before giving up — self-tunes to the machine without discarding earlier work.
+ADAPTIVE_CHUNK_FLOOR_SEC = 60
 
 try:
     from faster_whisper import WhisperModel
@@ -83,15 +105,78 @@ AUDIO_VIDEO_EXTS: tuple[str, ...] = (
 from formatters import format_timestamp, format_duration  # noqa: E402  pylint: disable=wrong-import-position
 
 
-def detect_device() -> str:
-    """Return 'cuda' if CTranslate2 sees a GPU, else 'cpu' (no torch dependency).
+@functools.lru_cache(maxsize=1)
+def _cudnn_available() -> bool:
+    """True if the cuDNN op library CTranslate2 needs at inference can be loaded.
 
-    CTranslate2 runs the model and ships its own CUDA libs, so its device count
-    is the authoritative signal.
+    CTranslate2 loads cuDNN lazily inside native code on the first transcribe;
+    if it's missing the process dies with an uncatchable 0xC0000409 (we observed
+    "cudnn_ops_infer64_8.dll not found"). An EXPLICIT load here hands control back
+    to Python (OSError on failure), so we can detect the gap up front and stay on
+    CPU instead of hard-crashing mid-transcription. Loading also pulls cuDNN's own
+    dependencies, so a success means the whole chain is usable.
+    """
+    name = ("cudnn_ops_infer64_8.dll" if os.name == "nt"
+            else "libcudnn_ops_infer.so.8")
+    try:
+        ctypes.CDLL(name)
+        return True
+    except OSError:
+        return False
+
+
+@functools.lru_cache(maxsize=1)
+def _cuda_vram_bytes() -> Optional[int]:
+    """Total VRAM of the first CUDA GPU in bytes via nvidia-smi, or None."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        first = out.stdout.strip().splitlines()[0].strip()
+        return int(first) * 1024 * 1024  # MiB -> bytes
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.info("Could not query GPU VRAM (%s).", exc)
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def gpu_is_usable() -> bool:
+    """True only if the CUDA GPU can actually run the model end-to-end.
+
+    Guards two independent failures a bare device count misses: missing cuDNN
+    (inference hard-crashes) and too-little VRAM (the model OOMs at load). Either
+    one => stay on CPU. Memoized; the hardware is fixed for the process lifetime.
+    """
+    if not _cudnn_available():
+        LOGGER.warning("GPU gated off: cuDNN not available — using CPU.")
+        return False
+    vram = _cuda_vram_bytes()
+    if vram is None:
+        LOGGER.warning("GPU gated off: could not determine VRAM — using CPU.")
+        return False
+    if vram < MIN_CUDA_VRAM_BYTES:
+        LOGGER.warning(
+            "GPU gated off: VRAM %d MB < %d MB minimum for this model — using CPU.",
+            vram // (1024 * 1024), MIN_CUDA_VRAM_BYTES // (1024 * 1024))
+        return False
+    return True
+
+
+def detect_device() -> str:
+    """Return 'cuda' only if a GPU is present AND can actually run the model.
+
+    CTranslate2's device count says a GPU exists, but not whether cuDNN is
+    installed or whether there's enough VRAM. ``gpu_is_usable()`` checks both, so
+    a too-small/cuDNN-less card (which would OOM at load or hard-crash at the
+    first transcribe) falls back to CPU here instead of crashing later.
     """
     try:
         import ctranslate2  # pylint: disable=import-outside-toplevel
-        if ctranslate2.get_cuda_device_count() > 0:
+        if ctranslate2.get_cuda_device_count() > 0 and gpu_is_usable():
             return "cuda"
     except Exception as exc:  # pylint: disable=broad-except
         LOGGER.info("GPU detection unavailable (%s). Using CPU.", exc)
@@ -102,7 +187,10 @@ def resolve_quality(depth_label: str, device: str = "cpu") -> dict:
     """Map a UI 'analysis depth' label to engine settings.
 
     Keeps this policy out of the GUI. beam_size/patience are device-independent;
-    compute_type is adjusted for the device (int8 is unsupported on CUDA).
+    compute_type is adjusted for the device: GPU always runs float16 (the
+    recommended Whisper GPU precision and the only way large-v3-turbo fits a
+    small card), CPU keeps the requested precision (float32 for Precise/Deep,
+    int8 for Fast).
     """
     label = (depth_label or "").lower()
     if "deep" in label:
@@ -111,25 +199,28 @@ def resolve_quality(depth_label: str, device: str = "cpu") -> dict:
         compute_type, beam_size, patience = "float32", 5, 1.0
     else:  # Fast / default
         compute_type, beam_size, patience = "int8", 5, 1.0
-    if device == "cuda" and compute_type == "int8":
-        compute_type = "float16"  # int8 not supported on GPU
+    if device == "cuda":
+        # float16 on GPU regardless of preset: int8 isn't supported on CUDA, and
+        # float16 halves VRAM vs float32 with a quality delta below the model's
+        # own decoding noise. beam_size still distinguishes Precise (5) / Deep (10).
+        compute_type = "float16"
     return {"compute_type": compute_type, "beam_size": beam_size, "patience": patience}
 
 
 def cpu_compute_type(compute_type: str) -> str:
-    """Pick a CPU compute type when falling back from a GPU that was too small.
+    """Pick a CPU compute type for the (now rare) GPU->CPU fallback.
 
-    Always ``int8`` on fallback. We *used* to preserve ``float32`` here to keep
-    the user's chosen precision, but that backfired: a GPU load only fails when
-    the model is too big for VRAM, and loading that same model on CPU as
-    ``float32`` puts the full-size weights (~4x int8) into system RAM. That RAM
-    then competes with faster-whisper's full-file STFT and tips long files into a
-    MemoryError — whereas the original GPU run kept the weights in VRAM, leaving
-    system RAM free for feature extraction (this is the "it worked before"
-    regression). ``int8`` is the only GPU-oriented type valid on CPU anyway, and
-    it keeps the fallback both light on memory and far faster than CPU float32.
+    We only reach CPU after the whole GPU ladder is exhausted (the requested
+    precision AND int8_float16, which has ~4x smaller weights and fits tiny
+    cards). So a GPU machine stays on the GPU; CPU is for boxes with no usable
+    CUDA at all. When we do land here the user asked for the best possible CPU
+    quality, which is ``float32`` — so the GPU-only types (``float16`` /
+    ``int8_float16`` / ``int8_float32``, none valid on CPU) map to ``float32``.
+    A user who explicitly picked ``int8`` (Fast) keeps it.
     """
-    return "int8"
+    if compute_type in ("float16", "int8_float16", "int8_float32"):
+        return "float32"
+    return compute_type
 
 
 # Lightweight stand-in for faster-whisper's TranscriptionInfo, used when we
@@ -147,6 +238,10 @@ class Transcriber:
         # Set True if a CUDA load failed and we transparently loaded on CPU,
         # so the GUI can tell the user they're on the slower path.
         self.fell_back_to_cpu = False
+        # Set to (requested, used) if the GPU couldn't fit the requested
+        # precision and we loaded a smaller GPU precision instead (e.g. asked
+        # float16, got int8_float16 because the card is too small for float16).
+        self.gpu_precision_downgraded: Optional[tuple[str, str]] = None
         self._model: WhisperModel = self._load_model()
 
     def _load_model(self) -> WhisperModel:
@@ -168,34 +263,61 @@ class Transcriber:
         LOGGER.info("Loading model: %s (%s, %s)",
                     model_path.name, device, compute_type)
 
-        try:
-            return self._build_model(model_path, device, compute_type)
-        except Exception as e:
-            # On the GPU path a load failure is almost always CUDA out-of-memory
-            # ("GPU too small for this model"). Fall back to CPU, which is slower
-            # but always has room. A CPU load that fails has nowhere left to go,
-            # so it just propagates to the caller / GUI as before.
-            if device != "cuda":
+        # Pure-CPU machine (no CUDA): load at the requested precision and let a
+        # failure propagate — there's nowhere lower to fall.
+        if device != "cuda":
+            try:
+                return self._build_model(model_path, device, compute_type)
+            except Exception as e:
                 LOGGER.error("Failed to load model: %s", str(e))
                 raise
 
-            cpu_compute = cpu_compute_type(compute_type)
-            LOGGER.warning(
-                "GPU model load failed (%s). Falling back to CPU (%s).",
-                e, cpu_compute)
+        # CUDA: walk a precision ladder so a small card stays on the GPU instead
+        # of dropping to slow CPU. A GPU load fails almost only on CUDA
+        # out-of-memory; the requested float16 weights may not fit a 2GB card,
+        # but int8_float16 (~4x smaller weights, float16 compute) usually does.
+        gpu_ladder = [compute_type]
+        if "int8" not in compute_type:
+            gpu_ladder.append("int8_float16")
+        last_gpu_err: Optional[Exception] = None
+        for ct in gpu_ladder:
             try:
-                model = self._build_model(model_path, "cpu", cpu_compute)
-            except Exception as cpu_e:
-                LOGGER.error("CPU fallback also failed: %s", cpu_e)
-                raise
-
-            # Reflect the device/compute_type that actually loaded so the report
-            # and the GUI's reload check see reality, not the original request.
-            self._config = replace(
-                self._config, device="cpu", compute_type=cpu_compute)
-            self.fell_back_to_cpu = True
-            LOGGER.info("Model loaded on CPU after GPU fallback.")
+                model = self._build_model(model_path, "cuda", ct)
+            except Exception as e:  # pylint: disable=broad-except
+                last_gpu_err = e
+                LOGGER.warning("GPU load at %s failed (%s).", ct, e)
+                continue
+            if ct != compute_type:
+                # Loaded on the GPU, but at a lower precision than requested.
+                self.gpu_precision_downgraded = (compute_type, ct)
+                self._config = replace(self._config, compute_type=ct)
+                LOGGER.warning(
+                    "GPU too small for %s; loaded %s on GPU instead "
+                    "(weights quantized, compute stays float16).",
+                    compute_type, ct)
+            else:
+                LOGGER.info("Model loaded on GPU (%s).", ct)
             return model
+
+        # Whole GPU ladder exhausted — fall back to CPU at the best quality the
+        # user asked for (float32), which is slower but always has room.
+        cpu_compute = cpu_compute_type(compute_type)
+        LOGGER.warning(
+            "All GPU attempts failed (%s). Falling back to CPU (%s).",
+            last_gpu_err, cpu_compute)
+        try:
+            model = self._build_model(model_path, "cpu", cpu_compute)
+        except Exception as cpu_e:
+            LOGGER.error("CPU fallback also failed: %s", cpu_e)
+            raise
+
+        # Reflect the device/compute_type that actually loaded so the report and
+        # the GUI's reload check see reality, not the original request.
+        self._config = replace(
+            self._config, device="cpu", compute_type=cpu_compute)
+        self.fell_back_to_cpu = True
+        LOGGER.info("Model loaded on CPU after GPU fallback.")
+        return model
 
     def _build_model(self, model_path: Path, device: str,
                      compute_type: str) -> WhisperModel:
@@ -485,118 +607,149 @@ class Transcriber:
     MIN_CHUNK_DURATION = 600   # 10 minutes
     MAX_CHUNK_DURATION = 1200  # 20 minutes
 
+    @staticmethod
+    def _is_memory_error(e: Exception) -> bool:
+        """True for the ways numpy/the runtime report an out-of-memory."""
+        error_str = str(e)
+        return ("MemoryError" in error_str or "Unable to allocate" in error_str
+                or isinstance(e, MemoryError) or "ArrayMemoryError" in error_str)
+
+    @staticmethod
+    def _safe_unlink(path: Path) -> None:
+        """Delete a temp file, ignoring 'already gone' / OS errors."""
+        try:
+            if path.exists():
+                os.unlink(path)
+        except OSError:
+            pass
+
+    def _yield_span(self, input_path: Path, start: float, duration: float,
+                    chunk_kwargs: dict,
+                    cancel_check: Optional[Callable[[], bool]] = None):
+        """Transcribe one ``[start, start+duration]`` span, yielding segments with
+        timestamps shifted back onto the original file.
+
+        On a MemoryError the span is halved and each half retried, recursing down
+        to ``ADAPTIVE_CHUNK_FLOOR_SEC``. This self-tunes chunk size to the machine
+        and, because it runs inside the streaming generator, preserves every
+        segment already yielded from earlier spans (no discard-on-failure).
+        Non-memory errors, and OOMs at the floor, re-raise.
+        """
+        if cancel_check and cancel_check():
+            raise Exception("Cancelled")
+
+        temp_chunk = self._slice_audio(
+            input_path, start, duration, cancel_check=cancel_check)
+        if not temp_chunk:
+            # A failed slice would otherwise silently truncate the transcript
+            # while the caller still marks the file "completed". Fail loudly so
+            # the file is recorded as failed instead of partially-done.
+            raise RuntimeError(
+                f"Failed to create audio slice at {format_duration(start)}. "
+                "Aborting chunked transcription to avoid silent truncation.")
+
+        try:
+            segments, _ = self._model.transcribe(str(temp_chunk), **chunk_kwargs)
+            for segment in segments:
+                # Adjust timestamps relative to the original file.
+                new_start = segment.start + start
+                new_end = segment.end + start
+                if hasattr(segment, '_replace'):
+                    # Older faster-whisper versions use namedtuples.
+                    yield segment._replace(start=new_start, end=new_end)
+                else:
+                    # Newer versions use the Segment class - copy with new times.
+                    from faster_whisper.transcribe import Segment
+                    yield Segment(
+                        id=segment.id,
+                        seek=segment.seek,
+                        start=new_start,
+                        end=new_end,
+                        text=segment.text,
+                        tokens=segment.tokens,
+                        temperature=segment.temperature,
+                        avg_logprob=segment.avg_logprob,
+                        compression_ratio=segment.compression_ratio,
+                        no_speech_prob=segment.no_speech_prob,
+                        words=segment.words if hasattr(segment, 'words') else None,
+                    )
+        except Exception as e:  # pylint: disable=broad-except
+            half = duration / 2
+            if self._is_memory_error(e) and half >= ADAPTIVE_CHUNK_FLOOR_SEC:
+                LOGGER.warning(
+                    "MemoryError on span [%s -> %s]; splitting in half (%s each) "
+                    "and retrying — earlier audio is kept.",
+                    format_duration(start), format_duration(start + duration),
+                    format_duration(half))
+                # Free this span's slice before recursing so retries don't pile
+                # up on disk (the finally below is then a no-op).
+                self._safe_unlink(temp_chunk)
+                yield from self._yield_span(
+                    input_path, start, half, chunk_kwargs, cancel_check)
+                yield from self._yield_span(
+                    input_path, start + half, half, chunk_kwargs, cancel_check)
+                return
+            # Non-memory error, or already at the floor: surface it.
+            LOGGER.error(
+                "Error processing span [%s -> %s] (%s): %s",
+                format_duration(start), format_duration(start + duration),
+                type(e).__name__, e)
+            raise
+        finally:
+            self._safe_unlink(temp_chunk)
+
     def _transcribe_chunked(self, input_path: Path, total_duration: float, transcribe_kwargs: dict,
                             cancel_check: Optional[Callable[[], bool]] = None):
-        """Generator that yields segments by processing audio in chunks (safe for low memory).
+        """Generator yielding segments by processing audio in physical chunks
+        (safe for low memory).
+
+        Chunk size is device-aware — small on CPU (the float32 model is resident
+        in RAM, where faster-whisper's full-file STFT can OOM) and larger on GPU.
+        A chunk that still OOMs is adaptively sub-divided by ``_yield_span``.
 
         ``cancel_check``: optional callable returning True to abort between
         chunks and during the (now killable) per-chunk slice.
         """
-
-        # Remove chunk_length to prevent nested chunking issues
+        # Remove chunk_length to prevent nested chunking issues.
         chunk_kwargs = transcribe_kwargs.copy()
-        if 'chunk_length' in chunk_kwargs:
-            chunk_kwargs.pop('chunk_length')
+        chunk_kwargs.pop('chunk_length', None)
+
+        if self._config.device == "cpu":
+            min_dur, max_dur = CPU_MIN_CHUNK_DURATION, CPU_MAX_CHUNK_DURATION
+        else:
+            min_dur, max_dur = self.MIN_CHUNK_DURATION, self.MAX_CHUNK_DURATION
 
         current_time = 0.0
-
         while current_time < total_duration:
             if cancel_check and cancel_check():
                 raise Exception("Cancelled")
 
-            # We want a chunk between 10 and 20 minutes.
-            # So we search for silence between [current+10m, current+20m]
-
-            search_start = current_time + self.MIN_CHUNK_DURATION
-
-            # If remaining audio is less than MIN_CHUNK_DURATION, just take it all
+            # Aim for a chunk between min_dur and max_dur, split on silence.
+            search_start = current_time + min_dur
             if search_start >= total_duration:
-                chunk_duration = total_duration - current_time
                 split_point = total_duration
             else:
-                # Calculate search window
-                # If total remaining is less than MAX_CHUNK_DURATION, cap it
-                end_limit = min(
-                    current_time + self.MAX_CHUNK_DURATION, total_duration)
+                end_limit = min(current_time + max_dur, total_duration)
                 search_window = end_limit - search_start
-
                 if search_window <= 0:
-                    # e.g. exactly 10 mins left
                     split_point = end_limit
                 else:
                     split_point = self._find_nearest_silence(
                         input_path, search_start, search_window)
 
-            # Safety check: Ensure we advance
+            # Safety check: ensure we always advance.
             if split_point <= current_time:
-                split_point = current_time + self.MIN_CHUNK_DURATION
+                split_point = current_time + min_dur
             split_point = min(split_point, total_duration)
 
             chunk_duration = split_point - current_time
-
             LOGGER.info(
                 "Processing chunk: %s - %s (duration %s)",
                 format_duration(current_time), format_duration(split_point),
                 format_duration(chunk_duration))
 
-            temp_chunk = self._slice_audio(
-                input_path, current_time, chunk_duration, cancel_check=cancel_check)
-            if not temp_chunk:
-                # A failed slice would otherwise silently truncate the transcript
-                # while the caller still marks the file "completed". Fail loudly
-                # so the file is recorded as failed instead of partially-done.
-                raise RuntimeError(
-                    f"Failed to create audio slice at {format_duration(current_time)}. "
-                    "Aborting chunked transcription to avoid silent truncation.")
-
-            try:
-                segments, _ = self._model.transcribe(
-                    str(temp_chunk), **chunk_kwargs)
-
-                for segment in segments:
-                    # Adjust timestamps relative to the original file
-                    new_start = segment.start + current_time
-                    new_end = segment.end + current_time
-
-                    # Create a new segment with adjusted timestamps
-                    # Check if segment has _replace (namedtuple) or needs reconstruction
-                    if hasattr(segment, '_replace'):
-                        # Older faster-whisper versions use namedtuples
-                        yield segment._replace(start=new_start, end=new_end)
-                    else:
-                        # Newer versions use Segment class - create modified copy
-                        from faster_whisper.transcribe import Segment
-                        yield Segment(
-                            id=segment.id,
-                            seek=segment.seek,
-                            start=new_start,
-                            end=new_end,
-                            text=segment.text,
-                            tokens=segment.tokens,
-                            temperature=segment.temperature,
-                            avg_logprob=segment.avg_logprob,
-                            compression_ratio=segment.compression_ratio,
-                            no_speech_prob=segment.no_speech_prob,
-                            words=segment.words if hasattr(segment, 'words') else None,
-                        )
-
-            except Exception as e:  # pylint: disable=broad-except
-                # Record which chunk failed and why; re-raise to fail the file
-                # (we're already chunking, so retrying smaller won't help). Note:
-                # chunks transcribed before this point are discarded with the
-                # generator unwind — the file is reported failed, not partial.
-                LOGGER.error(
-                    "Error processing chunk [%s -> %s] (%s): %s — failing this file; "
-                    "earlier chunks are discarded.",
-                    format_duration(current_time), format_duration(split_point),
-                    type(e).__name__, e)
-                raise
-            finally:
-                if temp_chunk.exists():
-                    try:
-                        os.unlink(temp_chunk)
-                    except OSError:
-                        pass
+            yield from self._yield_span(
+                input_path, current_time, chunk_duration, chunk_kwargs, cancel_check)
 
             current_time = split_point
 
@@ -613,8 +766,11 @@ class Transcriber:
         """Decide the processing strategy for the input.
 
         Returns ``(full_duration_seconds, use_smart_chunking, chunk_length)``.
-        Files longer than 40 minutes use smart (physical) chunking to bound
-        memory. A user-configured ``chunk_length`` disables auto-detection.
+        Long files use smart (physical) chunking to bound memory. The threshold
+        is device-aware: CPU keeps the full-size float32 model resident in RAM
+        (where faster-whisper's full-file STFT can OOM), so it chunks far earlier
+        than GPU, which holds the model in VRAM and handles full files fine. A
+        user-configured ``chunk_length`` disables auto-detection.
         """
         if self._config.chunk_length is not None:
             chunk_length = self._config.chunk_length
@@ -628,7 +784,9 @@ class Transcriber:
             return 0.0, False, None
 
         duration_minutes = full_duration / 60
-        if duration_minutes > 40:
+        threshold_minutes = (CPU_CHUNK_THRESHOLD_MIN
+                             if self._config.device == "cpu" else 40)
+        if duration_minutes > threshold_minutes:
             LOGGER.info(
                 "Audio duration: %s - long file, using smart chunking "
                 "(physical splitting) to prevent memory errors.",
@@ -690,11 +848,7 @@ class Transcriber:
             )
         except Exception as e:  # pylint: disable=broad-except
             error_str = str(e)
-            is_memory_error = (
-                "MemoryError" in error_str or "Unable to allocate" in error_str
-                or isinstance(e, MemoryError) or "ArrayMemoryError" in error_str)
-
-            if is_memory_error and not use_smart_chunking:
+            if self._is_memory_error(e) and not use_smart_chunking:
                 LOGGER.warning(
                     "Memory Error detected during standard processing (%s). "
                     "Switching to safer Smart Chunking.", error_str)
@@ -797,14 +951,16 @@ class Transcriber:
         vad_status = "Active" if vad_filter else "Not Active"
         timestamp_status = "Yes" if add_timestamps else "No"
 
-        # Map beam_size to Word Analysis Depth name.
+        # Map beam_size to Word Analysis Depth name, showing the precision that
+        # actually ran (float16 / int8_float16 on GPU, float32 on CPU).
+        ct = self._config.compute_type
         depth_name = "Custom"
-        if bs == 5 and self._config.compute_type == "int8":
+        if bs == 5 and ct == "int8":
             depth_name = "Fast Analysis (int8)"
-        elif bs == 5 and self._config.compute_type == "float32":
-            depth_name = "Precise Analysis (float32)"
+        elif bs == 5:
+            depth_name = f"Precise Analysis ({ct})"
         elif bs == 10:
-            depth_name = "Deep Analysis (float32)"
+            depth_name = f"Deep Analysis ({ct})"
 
         report = [
             "\n\n" + "=" * 30,

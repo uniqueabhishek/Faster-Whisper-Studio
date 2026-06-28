@@ -227,12 +227,13 @@ class TranscriptionView(QWidget):
         compute_label = QLabel("Word Analysis Depth:")
         self.compute_combo = QComboBox()
         self.compute_combo.addItems([
-            "Precise Analysis (float32)",
-            "Deep Analysis (float32)"
+            "Precise Analysis",
+            "Deep Analysis"
         ])
-        # Set tooltips for each item
-        self.compute_combo.setItemData(0, "Checks 5 possibilities (full precision).", Qt.ToolTipRole)
-        self.compute_combo.setItemData(1, "Checks 10 possibilities (full precision).", Qt.ToolTipRole)
+        # Tooltips. Precision is device-adaptive: GPU runs float16 (near-float32
+        # quality, fits VRAM), CPU runs full float32.
+        self.compute_combo.setItemData(0, "Beam size 5. GPU: float16 (near-float32 quality, fits VRAM); CPU: full float32.", Qt.ToolTipRole)
+        self.compute_combo.setItemData(1, "Beam size 10 (most thorough). GPU: float16; CPU: full float32.", Qt.ToolTipRole)
         self.compute_combo.setMinimumHeight(30) # Taller combo
 
         # Set default to Precise Analysis
@@ -576,6 +577,7 @@ class TranscriptionView(QWidget):
         model load happens off-thread in ModelLoaderWorker.
         """
         import os
+        import psutil
 
         model_path = self.model_edit.text().strip()
         if not model_path:
@@ -594,7 +596,10 @@ class TranscriptionView(QWidget):
             language=None,
             device=device,  # Auto-detect GPU or fallback to CPU
             compute_type=compute_type,
-            cpu_threads=os.cpu_count() or 4,  # Use all CPU cores
+            # PHYSICAL cores, not logical: CTranslate2's GEMMs are compute-bound,
+            # so oversubscribing hyperthreads (8 logical on 4 physical) costs
+            # cache/SIMD contention rather than helping. psutil is already a dep.
+            cpu_threads=psutil.cpu_count(logical=False) or os.cpu_count() or 4,
             num_workers=1,  # Keep at 1 for now (can increase for batch processing)
         )
 
@@ -722,10 +727,20 @@ class TranscriptionView(QWidget):
             self._model_loader.wait()
         self._model_loader = None
         if self.statusBar():
+            downgrade = getattr(transcriber, "gpu_precision_downgraded", None)
             if getattr(transcriber, "fell_back_to_cpu", False):
-                # GPU was too small (CUDA OOM); we loaded on CPU instead, at
-                # int8 so the weights don't starve CPU feature extraction.
-                message = ("GPU out of memory — running on CPU (slower, int8). "
+                # GPU couldn't fit even int8_float16 (VRAM likely held by other
+                # apps); we loaded on CPU float32 instead. Point at the fast path.
+                message = ("GPU out of memory — running on CPU (slower). Close "
+                           "other GPU apps (e.g. browser) to free VRAM, then "
+                           "retry for the faster GPU path. Starting transcription...")
+            elif downgrade:
+                # Loaded on the GPU, but the card was too small for the requested
+                # precision so we dropped to int8_float16 (weights quantized,
+                # compute stays float16 — near-float16 quality, GPU-fast).
+                _req, used = downgrade
+                message = (f"GPU too small for full precision — running on GPU at "
+                           f"{used} (near-float16 quality, fast). "
                            "Starting transcription...")
             else:
                 message = "Model loaded. Starting transcription..."
