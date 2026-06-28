@@ -117,15 +117,19 @@ def resolve_quality(depth_label: str, device: str = "cpu") -> dict:
 
 
 def cpu_compute_type(compute_type: str) -> str:
-    """Pick a CPU-valid compute type when falling back from the GPU.
+    """Pick a CPU compute type when falling back from a GPU that was too small.
 
-    ``float16`` / ``int8_float16`` are GPU-oriented; CTranslate2 on CPU runs best
-    with ``int8``. ``float32`` and ``int8`` are already valid on CPU and pass
-    through unchanged so the user's chosen precision is preserved where possible.
+    Always ``int8`` on fallback. We *used* to preserve ``float32`` here to keep
+    the user's chosen precision, but that backfired: a GPU load only fails when
+    the model is too big for VRAM, and loading that same model on CPU as
+    ``float32`` puts the full-size weights (~4x int8) into system RAM. That RAM
+    then competes with faster-whisper's full-file STFT and tips long files into a
+    MemoryError — whereas the original GPU run kept the weights in VRAM, leaving
+    system RAM free for feature extraction (this is the "it worked before"
+    regression). ``int8`` is the only GPU-oriented type valid on CPU anyway, and
+    it keeps the fallback both light on memory and far faster than CPU float32.
     """
-    if compute_type in ("float16", "int8_float16"):
-        return "int8"
-    return compute_type
+    return "int8"
 
 
 # Lightweight stand-in for faster-whisper's TranscriptionInfo, used when we

@@ -23,11 +23,13 @@ def test_resolve_quality_gpu_promotes_int8_to_float16():
     assert resolve_quality("Deep Analysis (float32)", "cuda")["compute_type"] == "float32"
 
 
-def test_cpu_compute_type_downgrades_gpu_types():
-    # GPU-oriented types become int8 on CPU; CPU-valid types pass through.
+def test_cpu_compute_type_always_int8_on_fallback():
+    # A GPU load only fails when the model is too big for VRAM, so the CPU
+    # fallback always uses int8 — keeping system RAM free for the full-file STFT
+    # (loading float32 on CPU regressed long files into a MemoryError).
     assert cpu_compute_type("float16") == "int8"
     assert cpu_compute_type("int8_float16") == "int8"
-    assert cpu_compute_type("float32") == "float32"
+    assert cpu_compute_type("float32") == "int8"
     assert cpu_compute_type("int8") == "int8"
 
 

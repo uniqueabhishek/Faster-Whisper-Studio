@@ -713,11 +713,19 @@ class TranscriptionView(QWidget):
 
     def _on_model_loaded(self, transcriber: Transcriber) -> None:
         self._transcriber = transcriber
+        # `loaded` is emitted from inside ModelLoaderWorker.run() (a queued
+        # cross-thread signal), so run() may not have unwound yet when this slot
+        # runs. Wait for the thread to actually finish before dropping our last
+        # reference, otherwise refcounting destroys the QThread while it is still
+        # running -> "QThread: Destroyed while thread is still running" -> abort.
+        if self._model_loader is not None:
+            self._model_loader.wait()
         self._model_loader = None
         if self.statusBar():
             if getattr(transcriber, "fell_back_to_cpu", False):
-                # GPU was too small (CUDA OOM); we loaded on CPU instead.
-                message = ("GPU out of memory — running on CPU (slower). "
+                # GPU was too small (CUDA OOM); we loaded on CPU instead, at
+                # int8 so the weights don't starve CPU feature extraction.
+                message = ("GPU out of memory — running on CPU (slower, int8). "
                            "Starting transcription...")
             else:
                 message = "Model loaded. Starting transcription..."
@@ -725,6 +733,10 @@ class TranscriptionView(QWidget):
         self._start_pending_batch()
 
     def _on_model_load_failed(self, message: str) -> None:
+        # Same race as _on_model_loaded: `failed` is emitted from inside run(),
+        # so wait for the thread to finish before releasing our reference.
+        if self._model_loader is not None:
+            self._model_loader.wait()
         self._model_loader = None
         self._pending_batch_args = None
         self._set_busy(False)
