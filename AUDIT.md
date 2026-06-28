@@ -12,16 +12,21 @@ remediated.
 
 | Bucket | Count |
 |---|---|
-| ✅ Done | 48 |
+| ✅ Done | 54 |
 | 🟡 Partial | 0 |
 | ⚪ Non-essential (accepted) | 1 |
-| 🔴 Pending | 4 |
-| **Total findings** | **53** |
+| 🔴 Pending | 2 |
+| **Total findings** | **57** |
 
-**Critical + High (12):** 7 done · 5 pending — every remaining high-severity item
-is in the licensing/secrets tier (architecture/business decisions).
+**Remaining (2):** both Critical client-side-enforcement issues (a patchable
+boolean and a swappable embedded key) that no purely-offline scheme can close —
+a server-side activation design is in progress to address them.
 
-Every test passes (`pytest`, 30 tests) and the GUI constructs headlessly
+> Commit hashes below predate a June 2026 history rewrite (which purged a stale
+> `license.dat` blob); older hashes may not resolve, but every commit is still
+> identifiable by its message. Post-rewrite work references current hashes.
+
+Every test passes (`pytest`, 64 tests) and the GUI constructs headlessly
 (offscreen smoke test) after each change.
 
 ---
@@ -33,8 +38,23 @@ Every test passes (`pytest`, 30 tests) and the GUI constructs headlessly
 |---|---|---|---|
 | High | PyQt5 is GPLv3 — illegal to ship in a closed-source product without a Riverbank license | Migrated to **PySide6 (LGPLv3)** and merged to `main`; README license claim corrected | `c676f5b`, `4f75afa` |
 | High | NTP-only time silently falls back to the local clock → offline clock-rollback defeats expiry | Prefer NTP (authoritative); offline, reject a clock moved backwards below a tamper-resistant, machine-bound HMAC high-water mark; 1-day skew grace | `87df3b1` |
+| **High** | `get_machine_id()` silently degraded to a spoofable hostname+MAC hash — defeats node-locking and can lock out legit users | Removed the fallback; returns `HWID_UNAVAILABLE` and verification **fails closed**; `get_hwid.py` guides to support | `0718f2a` |
+| **Critical** | A signed `license.dat` blob lived in public git history | Purged from all of `main` (history rewrite) and force-pushed; the app no longer reads `license.dat` (key-only flow). No private key was ever committed | history rewrite |
 | Low | License signers (`admin_keygen.py` / `generate_test_license.py`) emit divergent schemas | Unified to one canonical schema; verifier validates required fields before indexing | `f750848` |
 | Info | PyArmor/PyInstaller hardening claims overstated protection | Security doc now states the honest threat model (only `license_guard.py` obfuscated; bypassable enforcement) | `f750848` |
+
+### License activation & hardening (post-audit)
+The license delivery moved to a **key-only** flow (paste an `FWL-` key; no
+customer-facing `.dat`) with an in-app activation screen, a Registered/Unregistered
+status chip, and a vendor License Manager. A focused security sweep of the new
+modules surfaced and fixed:
+
+| Sev | Finding | Fix | Commit |
+|---|---|---|---|
+| Critical | `generate_keypair_and_embed()` wrote the admin **private key** with default (potentially world-readable) permissions | `chmod 0o600` on the key and `0o700` on `admin_keys/` (best-effort; no-op where unsupported) | `0718f2a` |
+| High | The saved customer `license.key` was written world-readable | `chmod 0o600` on the key and `0o700` on the per-user app-data dir | `0718f2a` |
+| Med | Unbounded customer name could bloat the registry/keys | Bounded to 200 chars in `build_license_data` | `0718f2a` |
+| Med | `OSError` text (full filesystem path) shown in the activation UI | Generic message to the user; real error logged at warning | `0718f2a` |
 
 ### Build, Packaging & Distribution
 | Sev | Finding | Fix | Commit |
@@ -113,29 +133,35 @@ Every test passes (`pytest`, 30 tests) and the GUI constructs headlessly
 
 ---
 
-## 🔴 Pending (4) — the licensing/secrets tier
+## 🔴 Pending (2) — client-side enforcement
 
-These are architecture/business decisions, not code cleanups. The Ed25519
-signature still prevents forgery without the (never-committed) private key, but
-the enforcement around it is bypassable on the client.
+Both are architectural, not code cleanups. The Ed25519 signature still prevents
+forgery without the (never-committed) private key, but the *enforcement* around it
+runs on the attacker's machine and is therefore bypassable.
 
 | Sev | Finding | Why it matters |
 |---|---|---|
 | **Critical** | Enforcement is one patchable boolean (`verify_license_gui()` then exit) | `app.py` is not obfuscated; an attacker NOPs the one call or stubs the module |
 | **Critical** | Plaintext embedded `PUBLIC_KEY_PEM` | Swap it to sign and resell forged licenses for any machine/expiry |
-| **Critical** | Full keygen toolchain + a signed `license.dat` are in git history | Untracked at HEAD; the history blob is low-value (no private key was ever committed) but unpurged |
-| **High** | `get_machine_id()` silently degrades to a spoofable hostname+MAC hash | Defeats node-locking where the fallback is reachable; can also lock out legit users |
 
-**The only change that meaningfully raises the bar** against all of these at once
-is moving verification **server-side** (online activation/heartbeat issuing
-short-lived tokens, with real functionality gated on server-validated state). Any
-purely-offline, client-side scheme is bypassable because the trust boundary runs
-on the attacker's machine.
+**The only change that meaningfully raises the bar** against both at once is moving
+verification **server-side** (online activation/heartbeat issuing short-lived
+tokens, with functionality gated on server-validated state). Any purely-offline,
+client-side scheme is bypassable because the trust boundary runs on the attacker's
+machine.
+
+A full server-side activation design now exists in **[`SERVER_LICENSING.md`](SERVER_LICENSING.md)**
+(design only, not yet implemented). It closes **#2 decisively** (private key moves
+to the backend; clients hold only pinned public keys) and closes **#1 honestly** by
+gating the **encrypted model weights** on a server-issued token rather than a
+patchable flag — with the residual risk stated plainly. Implementation is a phased
+project gated on one product decision (whether to ship the encrypted bundled model
+as the only supported model).
 
 ---
 
 ## Notes
 
 - The audit excluded `.venv/`, `build/`, `dist/` (third-party / build artifacts).
-- Verification at each step: `pytest` (30 tests) + an offscreen GUI construction
+- Verification at each step: `pytest` (64 tests) + an offscreen GUI construction
   smoke test; the GUI's interactive paths were validated manually.
