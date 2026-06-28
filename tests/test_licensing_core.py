@@ -47,6 +47,11 @@ def test_build_license_data_uses_canonical_schema():
     assert data["issued"] == "2025-01-01"
 
 
+def test_build_license_data_rejects_overlong_customer():
+    with pytest.raises(ValueError):
+        core.build_license_data("x" * (core.MAX_CUSTOMER_LEN + 1), "b" * 64, "2030-01-01")
+
+
 def test_is_valid_machine_id():
     assert core.is_valid_machine_id("a" * 64)
     assert core.is_valid_machine_id("0123456789ABCDEF" * 4)

@@ -66,14 +66,21 @@ def keys_exist(path: str = PRIVATE_KEY_FILE) -> bool:
     return os.path.exists(path)
 
 
+MAX_CUSTOMER_LEN = 200
+
+
 def build_license_data(customer: str, machine_id: str, expiry: str,
                        issued: str | None = None) -> dict:
     """Build the canonical license payload that gets signed.
 
     Schema (shared with license_guard's verifier): customer, machine_id, expiry,
     issued. Keep these four fields and their names stable — the signature is over
-    ``json.dumps(data, sort_keys=True)``.
+    ``json.dumps(data, sort_keys=True)``. The customer name is bounded so a typo
+    or paste can't bloat the registry / keys.
     """
+    customer = (customer or "").strip()
+    if len(customer) > MAX_CUSTOMER_LEN:
+        raise ValueError(f"Customer name too long (max {MAX_CUSTOMER_LEN} characters).")
     return {
         "customer": customer,
         "machine_id": machine_id,
@@ -157,15 +164,26 @@ def generate_keypair_and_embed(guard_file: str = GUARD_FILE,
             "aborting before generating keys.")
 
     os.makedirs(keys_dir, exist_ok=True)
+    try:
+        os.chmod(keys_dir, 0o700)  # owner-only; no-op where unsupported
+    except OSError:
+        pass
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
-    with open(os.path.join(keys_dir, "private_key.pem"), "wb") as f:
+    private_key_path = os.path.join(keys_dir, "private_key.pem")
+    with open(private_key_path, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         ))
+    # The private signing key is the crown jewel — restrict it to the owner so a
+    # permissive umask can't leave it world-readable on Unix admin machines.
+    try:
+        os.chmod(private_key_path, 0o600)
+    except OSError:
+        pass
 
     pub_pem = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,

@@ -31,11 +31,20 @@ _ROLLBACK_SECRET = b"fwgui-anti-rollback-v1"
 _ROLLBACK_GRACE = timedelta(days=1)
 
 
+def _restrict(path: str, mode: int) -> None:
+    """Best-effort owner-only permissions; a no-op where the OS doesn't support it."""
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def _appdata_dir() -> str:
     """Per-user, writable app-data directory (works for an installed exe too)."""
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
     directory = os.path.join(base, "FasterWhisperGUI")
     os.makedirs(directory, exist_ok=True)
+    _restrict(directory, 0o700)  # keep the license/state out of other users' reach
     return directory
 
 
@@ -66,6 +75,7 @@ def save_key(key_str: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(key_str.strip())
         os.replace(tmp, license_key_path())
+        _restrict(license_key_path(), 0o600)
     finally:
         if os.path.exists(tmp):
             try:
@@ -106,22 +116,20 @@ def _is_rollback(current: datetime, last_seen, grace: timedelta = _ROLLBACK_GRAC
     return last_seen is not None and current < last_seen - grace
 
 
-def _legacy_machine_id():
-    """Fallback HWID from hostname + MAC. Unstable; used only if WMI fails."""
-    import socket
-    import uuid
-    hostname = socket.gethostname()
-    mac = uuid.getnode()
-    raw_id = f"{hostname}-{mac}"
-    return hashlib.sha256(raw_id.encode()).hexdigest()
+# Returned when no stable hardware identifier can be read. Deliberately NOT a
+# usable ID: node-locking fails closed rather than falling back to a spoofable
+# hostname+MAC hash (which both defeats node-locking and can lock out legitimate
+# users when those values change). Verification rejects this value.
+HWID_UNAVAILABLE = "HWID_UNAVAILABLE"
 
 
 def get_machine_id():
-    """Generates a stable, unique Machine ID (HWID) from hardware serials.
+    """Generate a stable, unique Machine ID (HWID) from hardware serials.
 
-    Uses the SMBIOS UUID, motherboard serial, and CPU ID via WMI. These
-    survive reboots, network changes, and VPNs (unlike hostname/MAC). Falls
-    back to the legacy hostname+MAC method only if WMI is unavailable.
+    Uses the SMBIOS UUID, motherboard serial, and CPU ID via WMI — these survive
+    reboots, network changes, and VPNs. If none can be read, returns
+    ``HWID_UNAVAILABLE`` so the license check fails closed; we never derive an ID
+    from spoofable hostname/MAC values.
     """
     try:
         c = wmi.WMI()
@@ -149,18 +157,14 @@ def get_machine_id():
             pass
 
         if not parts:
-            # No stable hardware identifiers available; fall back.
-            return _legacy_machine_id()
+            LOGGER.error("No stable hardware identifiers available; HWID unavailable.")
+            return HWID_UNAVAILABLE
 
         raw_id = "|".join(parts)
         return hashlib.sha256(raw_id.encode()).hexdigest()
     except Exception as e:  # pylint: disable=broad-except
-        LOGGER.warning("WMI HWID failed, using legacy method: %s", e)
-        try:
-            return _legacy_machine_id()
-        except Exception as e2:  # pylint: disable=broad-except
-            LOGGER.error("Error generating HWID: %s", e2)
-            return "ERROR_GENERATING_HWID"
+        LOGGER.error("WMI HWID generation failed: %s", e)
+        return HWID_UNAVAILABLE
 
 
 def get_network_time():
@@ -203,6 +207,12 @@ def _verify_static(license_doc, current_hwid):
     if not isinstance(data, dict) or "machine_id" not in data or "expiry" not in data:
         return False, data if isinstance(data, dict) else None, \
             "This license is missing required fields. Please contact support."
+
+    # Fail closed if we couldn't read a stable hardware ID, rather than matching
+    # against a spoofable fallback.
+    if not current_hwid or current_hwid == HWID_UNAVAILABLE:
+        return False, data, ("Could not read a stable hardware ID for this machine.\n\n"
+                             "Please contact support.")
 
     if data["machine_id"] != current_hwid:
         return False, data, (f"This license is for a different machine.\n\n"

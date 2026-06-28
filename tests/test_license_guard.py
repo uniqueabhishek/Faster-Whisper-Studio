@@ -27,12 +27,9 @@ def test_embedded_public_key_loads():
     assert isinstance(pub, ed25519.Ed25519PublicKey)
 
 
-def test_legacy_machine_id_is_stable_64_hex():
-    a = license_guard._legacy_machine_id()
-    b = license_guard._legacy_machine_id()
-    assert a == b
-    assert len(a) == 64
-    int(a, 16)  # must be valid hex (raises ValueError otherwise)
+def test_no_spoofable_hostname_mac_fallback():
+    # The spoofable hostname+MAC fallback must be gone entirely.
+    assert not hasattr(license_guard, "_legacy_machine_id")
 
 
 def test_signature_roundtrip_is_key_order_independent():
@@ -170,6 +167,16 @@ def test_verify_license_doc_malformed(monkeypatch):
     _use_ephemeral_key(monkeypatch)
     ok, reason = license_guard.verify_license_doc({"data": {"machine_id": "x"}}, "hwid-1")
     assert not ok
+
+
+def test_verify_fails_closed_when_hwid_unavailable(monkeypatch):
+    # A properly-signed license still fails closed if this machine's HWID can't
+    # be read, instead of matching against a spoofable fallback.
+    private_key = _use_ephemeral_key(monkeypatch)
+    doc = _signed_doc(private_key, "hwid-1", "2099-01-01")
+    ok, reason = license_guard.verify_license_doc(doc, license_guard.HWID_UNAVAILABLE)
+    assert not ok
+    assert "stable hardware" in reason.lower()
 
 
 def _trust_key(monkeypatch, when):

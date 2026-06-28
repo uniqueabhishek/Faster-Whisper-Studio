@@ -9,6 +9,8 @@ store so the app won't ask again. Accepts only on a verified key; rejecting
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
@@ -25,6 +27,8 @@ import license_guard
 from license_codec import decode_key, encode_key
 from styles import DARK_THEME_QSS
 from ui_common import app_icon, center_window
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ActivationDialog(QDialog):
@@ -139,7 +143,10 @@ class ActivationDialog(QDialog):
         try:
             license_guard.save_key(encode_key(doc))
         except OSError as exc:
-            self._set_status(f"Could not save the license: {exc}", error=True)
+            LOGGER.warning("Could not save the activated license: %s", exc)
+            self._set_status(
+                "Could not save the license. Please check disk space and permissions, "
+                "then try again.", error=True)
             return
 
         self.accept()
