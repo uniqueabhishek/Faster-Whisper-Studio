@@ -21,6 +21,11 @@ import json
 
 KEY_PREFIX = "FWL-"
 
+# A real license key is a few hundred bytes (base64 of a small JSON doc). Cap the
+# accepted input well above that but far below anything that could exhaust memory,
+# so a maliciously huge pasted string is rejected BEFORE base64/JSON decoding.
+MAX_KEY_LENGTH = 8192
+
 
 def encode_key(doc: dict) -> str:
     """Encode a signed license document into a license-key string.
@@ -46,6 +51,11 @@ def decode_key(key: str) -> dict:
     """
     if not isinstance(key, str):
         raise ValueError("License key must be text.")
+
+    # Reject absurdly large input before doing any base64/JSON work, so a giant
+    # pasted string can't force a big allocation ahead of the signature check.
+    if len(key) > MAX_KEY_LENGTH:
+        raise ValueError("License key is too long to be valid.")
 
     # Paste artifacts: drop every kind of whitespace (spaces, tabs, newlines).
     compact = "".join(key.split())

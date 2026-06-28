@@ -6,8 +6,9 @@ obfuscates the REAL signed license_guard.py (Ed25519 verifier) before packaging,
 then builds from the single committed FasterWhisperGUI.spec — so the obfuscated
 build is identical to a normal build except the license check is hardened.
 
-The customer still receives their machine-locked, signed license.dat (generate
-it with admin_keygen.py) and ships it next to the exe.
+The customer activates with a machine-locked, signed license KEY (generate it with
+admin_keygen.py); the app stores it per-user after activation — nothing ships next
+to the exe.
 
 Safety: obfuscation is staged into an isolated build dir, and the original
 plaintext license_guard.py is ALWAYS restored via try/finally, so an interrupted
@@ -42,6 +43,11 @@ def main():
         return 1
     if not os.path.exists(SPEC_FILE):
         print(f"ERROR: {SPEC_FILE} not found. The committed build spec is required.")
+        return 1
+    bundled_ffmpeg = os.path.join("assets", "ffmpeg", "ffmpeg.exe")
+    if not os.path.exists(bundled_ffmpeg):
+        print(f"ERROR: {bundled_ffmpeg} is missing. Run `python download_ffmpeg.py`")
+        print("once before building so ffmpeg is bundled (not silently taken from PATH).")
         return 1
 
     # Keep the real plaintext source so we can always restore it.
@@ -79,8 +85,8 @@ def main():
 
         print("\n[3/3] Build complete.")
         print(r"  Hardened exe: dist\FasterWhisperGUI\FasterWhisperGUI.exe")
-        print("  Generate the customer's signed license.dat with admin_keygen.py")
-        print("  and ship it alongside the exe.")
+        print("  Generate the customer's signed license key with admin_keygen.py;")
+        print("  they paste it into the app's activation screen on first launch.")
         return 0
     except subprocess.CalledProcessError as exc:
         print(f"ERROR: build step failed: {exc}")

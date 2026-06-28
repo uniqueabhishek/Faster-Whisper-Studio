@@ -46,6 +46,12 @@ def test_decode_rejects_empty():
         license_codec.decode_key("   \n  ")
 
 
+def test_decode_rejects_oversized_input():
+    # A maliciously huge key must be rejected before any base64/JSON decoding.
+    with pytest.raises(ValueError):
+        license_codec.decode_key("FWL-" + "A" * (license_codec.MAX_KEY_LENGTH + 1))
+
+
 def test_decode_rejects_garbage():
     with pytest.raises(ValueError):
         license_codec.decode_key("FWL-this-is-not-base64-or-json-!!!")

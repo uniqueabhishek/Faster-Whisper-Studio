@@ -6,6 +6,7 @@ import atexit
 import logging
 import subprocess
 import tempfile
+import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,64 @@ def _cleanup_session_preprocess_dirs() -> None:
                 shutil.rmtree(directory, ignore_errors=True)
         except OSError:
             pass
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        if path.exists():
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def _clamp_float(value, low: float, high: float, default: float) -> float:
+    """Coerce ``value`` to a float in [low, high], falling back to ``default``.
+
+    Keeps non-numeric or out-of-range inputs from producing a malformed ffmpeg
+    filter string.
+    """
+    try:
+        return max(low, min(high, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _run_ffmpeg_op(cmd: list, output_path: Path, op_name: str,
+                   cancel_check: Optional[Callable[[], bool]]) -> bool:
+    """Run an ffmpeg command, polling for cancellation, ALWAYS reaping the child.
+
+    Single source of truth for the spawn/poll loop the preprocessing stages share.
+    Returns True on success (return code 0). On cancellation or failure the partial
+    output is removed, and a ``try/finally`` guarantees the subprocess is killed
+    even if the poll loop raises — so the process handle can never leak.
+    """
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        while True:
+            if cancel_check and cancel_check():
+                process.kill()
+                LOGGER.info("%s cancelled.", op_name)
+                _remove_quietly(output_path)
+                return False
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+        if process.returncode != 0:
+            LOGGER.error("ffmpeg %s failed with return code: %d",
+                         op_name, process.returncode)
+            return False
+        return True
+    finally:
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
 
 
 @dataclass
@@ -124,35 +183,8 @@ def convert_to_wav_16khz_mono(
             str(output_path)
         ]
 
-        # Use Popen to allow cancellation
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        # Poll for completion while checking for cancellation
-        while True:
-            if cancel_check and cancel_check():
-                process.kill()
-                LOGGER.info("Conversion cancelled for %s", input_path.name)
-                # Clean up partial file
-                if output_path.exists():
-                    try:
-                        os.unlink(output_path)
-                    except OSError:
-                        pass
-                return False
-
-            if process.poll() is not None:
-                break
-
-            import time
-            time.sleep(0.1)
-
-        if process.returncode != 0:
-            LOGGER.error("ffmpeg conversion failed with return code: %d", process.returncode)
+        if not _run_ffmpeg_op(cmd, output_path,
+                              f"conversion of {input_path.name}", cancel_check):
             return False
 
         LOGGER.info("Successfully converted %s to WAV", input_path.name)
@@ -189,43 +221,23 @@ def normalize_audio(
         LOGGER.info("Normalizing %s to %s LUFS (TP: %s, LRA: %s)...",
                    input_path.name, target_db, true_peak, loudness_range)
 
+        # Validate/clamp to the loudnorm-valid ranges so the filter string is
+        # always well-formed numbers (EBU R128: I -70..-5, TP -9..0, LRA 1..50).
+        i_val = _clamp_float(target_db, -70.0, -5.0, -20.0)
+        tp_val = _clamp_float(true_peak, -9.0, 0.0, -1.5)
+        lra_val = _clamp_float(loudness_range, 1.0, 50.0, 11.0)
+
         # ffmpeg loudnorm filter for EBU R128 normalization
-        # I = integrated loudness target
-        # TP = true peak target
-        # LRA = loudness range target
+        # I = integrated loudness target, TP = true peak, LRA = loudness range
         cmd = [
             _FFMPEG, "-y",
             "-i", str(input_path),
-            "-af", f"loudnorm=I={target_db}:TP={true_peak}:LRA={loudness_range}",
+            "-af", f"loudnorm=I={i_val}:TP={tp_val}:LRA={lra_val}",
             str(output_path)
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        while True:
-            if cancel_check and cancel_check():
-                process.kill()
-                LOGGER.info("Normalization cancelled for %s", input_path.name)
-                if output_path.exists():
-                    try:
-                        os.unlink(output_path)
-                    except OSError:
-                        pass
-                return False
-
-            if process.poll() is not None:
-                break
-
-            import time
-            time.sleep(0.1)
-
-        if process.returncode != 0:
-            LOGGER.error("ffmpeg normalization failed with return code: %d", process.returncode)
+        if not _run_ffmpeg_op(cmd, output_path,
+                              f"normalization of {input_path.name}", cancel_check):
             return False
 
         LOGGER.info("Successfully normalized %s", input_path.name)
@@ -266,7 +278,10 @@ def reduce_noise(
         # nr = noise reduction strength (dB)
         # nf = noise floor threshold (dB)
         # gs = gain smoothing for artifact reduction
-        filter_str = f"afftdn=nr={noise_reduction}:nf={noise_floor}:gs={gain_smooth}"
+        nr = _clamp_float(noise_reduction, 0.01, 97.0, 12.0)
+        nf = _clamp_float(noise_floor, -80.0, -20.0, -25.0)
+        gs = int(_clamp_float(gain_smooth, 0.0, 999.0, 3.0))
+        filter_str = f"afftdn=nr={nr}:nf={nf}:gs={gs}"
         cmd = [
             _FFMPEG, "-y",
             "-i", str(input_path),
@@ -274,32 +289,8 @@ def reduce_noise(
             str(output_path)
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        while True:
-            if cancel_check and cancel_check():
-                process.kill()
-                LOGGER.info("Noise reduction cancelled for %s", input_path.name)
-                if output_path.exists():
-                    try:
-                        os.unlink(output_path)
-                    except OSError:
-                        pass
-                return False
-
-            if process.poll() is not None:
-                break
-
-            import time
-            time.sleep(0.1)
-
-        if process.returncode != 0:
-            LOGGER.error("ffmpeg noise reduction failed with return code: %d", process.returncode)
+        if not _run_ffmpeg_op(cmd, output_path,
+                              f"noise reduction of {input_path.name}", cancel_check):
             return False
 
         LOGGER.info("Successfully reduced noise in %s", input_path.name)
@@ -342,8 +333,10 @@ def remove_music(
         # 1. highpass=f=<freq>: Remove frequencies below threshold (removes bass/low music)
         # 2. lowpass=f=<freq>: Remove frequencies above threshold (human speech range)
 
-        # Speech-optimized filter chain
-        filter_chain = f"highpass=f={highpass_freq},lowpass=f={lowpass_freq}"
+        # Speech-optimized filter chain (clamp to sane positive Hz).
+        hpf = int(_clamp_float(highpass_freq, 20.0, 20000.0, 200.0))
+        lpf = int(_clamp_float(lowpass_freq, 20.0, 20000.0, 3500.0))
+        filter_chain = f"highpass=f={hpf},lowpass=f={lpf}"
 
         cmd = [
             _FFMPEG, "-y",
@@ -352,32 +345,8 @@ def remove_music(
             str(output_path)
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        while True:
-            if cancel_check and cancel_check():
-                process.kill()
-                LOGGER.info("Music removal cancelled for %s", input_path.name)
-                if output_path.exists():
-                    try:
-                        os.unlink(output_path)
-                    except OSError:
-                        pass
-                return False
-
-            if process.poll() is not None:
-                break
-
-            import time
-            time.sleep(0.1)
-
-        if process.returncode != 0:
-            LOGGER.error("ffmpeg music removal failed with return code: %d", process.returncode)
+        if not _run_ffmpeg_op(cmd, output_path,
+                              f"music removal of {input_path.name}", cancel_check):
             return False
 
         LOGGER.info("Successfully removed music from %s", input_path.name)
@@ -427,7 +396,8 @@ def trim_silence_vad(
         except ImportError as e:
             LOGGER.error("Missing dependencies for VAD trimming: %s", str(e))
             LOGGER.info("Falling back to simple silence trimming with ffmpeg...")
-            return _trim_silence_ffmpeg(input_path, output_path, cancel_check)
+            return _trim_silence_ffmpeg(
+                input_path, output_path, cancel_check, min_silence_ms=min_silence_ms)
 
         # Load audio as float32 (Silero VAD expects float32; this also halves
         # the buffer vs soundfile's float64 default).
@@ -453,7 +423,8 @@ def trim_silence_vad(
                 LOGGER.warning(
                     "librosa unavailable to resample %dHz -> 16kHz; falling back "
                     "to ffmpeg silence removal for %s", sample_rate, input_path.name)
-                return _trim_silence_ffmpeg(input_path, output_path, cancel_check)
+                return _trim_silence_ffmpeg(
+                    input_path, output_path, cancel_check, min_silence_ms=min_silence_ms)
 
         if cancel_check and cancel_check():
             return False
@@ -526,21 +497,29 @@ def trim_silence_vad(
         LOGGER.error("VAD trimming failed for %s: %s", input_path.name, str(e))
         # Fallback to ffmpeg silence trimming
         LOGGER.info("Falling back to ffmpeg silence trimming...")
-        return _trim_silence_ffmpeg(input_path, output_path, cancel_check)
+        return _trim_silence_ffmpeg(
+            input_path, output_path, cancel_check, min_silence_ms=min_silence_ms)
 
 
 def _trim_silence_ffmpeg(
     input_path: Path,
     output_path: Path,
-    cancel_check: Optional[Callable[[], bool]] = None
+    cancel_check: Optional[Callable[[], bool]] = None,
+    min_silence_ms: int = DEFAULT_VAD_MIN_SILENCE_MS,
 ) -> bool:
     """
     Fallback: trim silence using ffmpeg silenceremove filter.
+
+    Honors the user's ``min_silence_ms`` (mapped to the silenceremove
+    start/stop_duration) so the fallback isn't silently fixed at 0.5 s. The dB
+    threshold stays fixed: a Silero VAD speech-probability ``threshold`` has no
+    meaningful ffmpeg-dB equivalent, so it is intentionally not mapped here.
 
     Args:
         input_path: Path to input audio file
         output_path: Path where trimmed audio will be saved
         cancel_check: Optional callable that returns True if cancellation is requested
+        min_silence_ms: Minimum silence duration to remove, in ms
 
     Returns:
         True if successful, False otherwise
@@ -548,46 +527,21 @@ def _trim_silence_ffmpeg(
     try:
         LOGGER.info("Trimming silence from %s using ffmpeg...", input_path.name)
 
-        # silenceremove filter
-        # start_periods=1: remove silence from beginning
-        # start_duration=0.5: minimum silence duration to remove (0.5s)
-        # start_threshold=-50dB: silence threshold
-        # stop_periods=-1: remove silence from end
-        # stop_duration=0.5
-        # stop_threshold=-50dB
+        # Map the user's min-silence (ms) to the silenceremove durations (s).
+        dur = max(0.1, _clamp_float(min_silence_ms, 0.0, 600000.0, 3000.0) / 1000.0)
+        silence_filter = (
+            f"silenceremove=start_periods=1:start_duration={dur}:start_threshold=-50dB:"
+            f"stop_periods=-1:stop_duration={dur}:stop_threshold=-50dB"
+        )
         cmd = [
             _FFMPEG, "-y",
             "-i", str(input_path),
-            "-af", "silenceremove=start_periods=1:start_duration=0.5:start_threshold=-50dB:stop_periods=-1:stop_duration=0.5:stop_threshold=-50dB",
+            "-af", silence_filter,
             str(output_path)
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        while True:
-            if cancel_check and cancel_check():
-                process.kill()
-                LOGGER.info("Silence trimming cancelled for %s", input_path.name)
-                if output_path.exists():
-                    try:
-                        os.unlink(output_path)
-                    except OSError:
-                        pass
-                return False
-
-            if process.poll() is not None:
-                break
-
-            import time
-            time.sleep(0.1)
-
-        if process.returncode != 0:
-            LOGGER.error("ffmpeg silence trimming failed with return code: %d", process.returncode)
+        if not _run_ffmpeg_op(cmd, output_path,
+                              f"silence trimming of {input_path.name}", cancel_check):
             return False
 
         LOGGER.info("Successfully trimmed silence from %s", input_path.name)

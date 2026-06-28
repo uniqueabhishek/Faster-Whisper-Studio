@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -13,6 +15,18 @@ from typing import List, Optional
 from datetime import datetime
 
 LOGGER = logging.getLogger(__name__)
+
+# Not a real secret (it ships in the binary), but signing the session file raises
+# the bar well above editing session.json in a text editor — a planted/tampered
+# file fails the check and is refused, so resume never trusts injected input/temp
+# paths. Mirrors the anti-rollback HMAC philosophy in license_guard.
+_SESSION_SECRET = b"fwgui-session-integrity-v1"
+
+
+def _session_mac(data: dict) -> str:
+    key = hashlib.sha256(_SESSION_SECRET).digest()
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    return hmac.new(key, canonical, hashlib.sha256).hexdigest()
 
 
 @dataclass
@@ -158,11 +172,12 @@ class SessionManager:
         with self._lock:
             try:
                 data = asdict(state)
+                payload = {"mac": _session_mac(data), "state": data}
                 fd, tmp_name = tempfile.mkstemp(
                     dir=str(self.session_dir), suffix=".tmp")
                 try:
                     with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, indent=2)
+                        json.dump(payload, f, indent=2)
                     os.replace(tmp_name, session_file)  # atomic on same filesystem
                 except Exception:
                     try:
@@ -217,7 +232,21 @@ class SessionManager:
 
         try:
             with open(session_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                payload = json.load(f)
+
+            # Verify the integrity MAC before trusting any paths inside. A planted
+            # or hand-edited session.json (e.g. one steering processing at
+            # attacker-chosen input/temp paths) fails here and is refused.
+            if (not isinstance(payload, dict)
+                    or "state" not in payload or "mac" not in payload):
+                LOGGER.error("Refusing to load session %s: unsigned/unknown format",
+                             session_id)
+                return None
+            data = payload["state"]
+            if not hmac.compare_digest(str(payload["mac"]), _session_mac(data)):
+                LOGGER.error("Refusing to load session %s: integrity check failed",
+                             session_id)
+                return None
 
             # Reconstruct FileStatus objects
             files = [FileStatus(**f) for f in data['files']]
@@ -347,6 +376,38 @@ class SessionManager:
                 self.save_session(state)
                 LOGGER.debug("Tracked temp file: %s", temp_path.name)
 
+    def remove_temp_file(self, state: SessionState, temp_path) -> None:
+        """Stop tracking a temp file (lock-held).
+
+        Workers delete their own temp WAV in a ``finally`` block; routing the list
+        mutation through here (instead of touching ``state.temp_files`` directly)
+        keeps it serialized with cleanup/other workers so concurrent
+        check-then-remove can't raise ValueError or corrupt iteration.
+        """
+        temp_str = str(temp_path)
+        with self._lock:
+            if temp_str in state.temp_files:
+                state.temp_files.remove(temp_str)
+                self.save_session(state)
+
+    @staticmethod
+    def _is_safe_temp(temp_path: Path) -> bool:
+        """Only our own mkstemp WAVs may be deleted from a tracked list.
+
+        Guards against a crafted session.json whose ``temp_files`` points at an
+        arbitrary or symlinked path: cleanup must never unlink anything that isn't
+        an ``fwgui_`` WAV living in the system temp dir.
+        """
+        try:
+            if temp_path.is_symlink():
+                return False
+            if not (temp_path.name.startswith("fwgui_") and temp_path.suffix == ".wav"):
+                return False
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            return temp_path.resolve().is_relative_to(temp_root)
+        except (OSError, ValueError):
+            return False
+
     def cleanup_temp_files(self, state: SessionState) -> None:
         """Clean up all tracked temporary files."""
         cleaned = 0
@@ -354,12 +415,15 @@ class SessionManager:
             for temp_path_str in state.temp_files[:]:  # Copy list
                 temp_path = Path(temp_path_str)
                 try:
-                    if temp_path.exists():
+                    if not self._is_safe_temp(temp_path):
+                        LOGGER.warning("Skipping unsafe tracked temp entry: %s", temp_path)
+                    elif temp_path.exists():
                         os.unlink(temp_path)
                         cleaned += 1
                         LOGGER.debug("Deleted temp file: %s", temp_path.name)
 
-                    # Remove from tracking list
+                    # Remove from tracking list either way (don't keep retrying a
+                    # rejected/already-gone entry).
                     state.temp_files.remove(temp_path_str)
                 except Exception as e:
                     LOGGER.warning("Failed to delete temp file %s: %s", temp_path, e)
@@ -385,6 +449,8 @@ class SessionManager:
         # delete another app's or another user's tmp*.wav.
         for temp_file in temp_dir.glob("fwgui_*.wav"):
             try:
+                if temp_file.is_symlink():
+                    continue  # never follow/clean a symlink masquerading as our temp
                 # Check if file is older than 1 hour
                 age_seconds = time.time() - temp_file.stat().st_mtime
                 if age_seconds > 3600:  # 1 hour

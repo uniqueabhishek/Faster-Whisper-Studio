@@ -213,6 +213,21 @@ def test_valid_license_advances_rollback_state(monkeypatch):
     assert len(calls) == 1, "a valid license should record the high-water mark exactly once"
 
 
+def test_license_valid_through_end_of_expiry_day(monkeypatch):
+    # Noon ON the expiry day must still be valid — the user keeps their last day.
+    private_key, _calls = _trust_key(monkeypatch, datetime(2030, 6, 28, 12, 0, 0))
+    doc = _signed_doc(private_key, "hwid-1", "2030-06-28")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert ok, reason
+
+
+def test_license_expired_the_day_after_expiry(monkeypatch):
+    private_key, _calls = _trust_key(monkeypatch, datetime(2030, 6, 29, 0, 0, 1))
+    doc = _signed_doc(private_key, "hwid-1", "2030-06-28")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert not ok and "ended on" in reason
+
+
 def test_full_key_round_trip_through_codec_and_core(monkeypatch):
     """A key minted by licensing_core decodes and verifies through license_guard."""
     import licensing_core as core

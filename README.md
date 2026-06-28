@@ -235,11 +235,16 @@ Identify interesting segments:
 
 ### Create Executable
 
+Fetch the bundled binaries first (one-time, gitignored), then build:
+
 ```bash
+python download_ffmpeg.py      # bundles ffmpeg/ffprobe into assets/ffmpeg/
+python download_vc_redist.py   # optional: VC++ runtime
 python build_exe.py
 ```
 
-The executable will be created in the `dist/` directory.
+`build_exe.py` aborts if `assets/ffmpeg/ffmpeg.exe` is missing, so a release can't
+silently ship without bundled ffmpeg. The executable is created in `dist/`.
 
 ### Requirements for Building
 - PyInstaller

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -102,7 +103,9 @@ class BatchWorker(QThread):
         self._patience = patience
         self._add_timestamps = add_timestamps
         self.add_report = add_report
-        self._cancel = False
+        # threading.Event gives a documented cross-thread visibility guarantee for
+        # cancellation, unlike a bare bool that merely rides on the GIL.
+        self._cancel = threading.Event()
         self._model_lock = threading.Lock()
         self._prep_lock = threading.Lock() # Lock for audio preparation (ffmpeg)
         self._pipeline_semaphore = threading.Semaphore(1)  # Only 1 file can be "in-flight" (preprocessing+transcribing) at a time
@@ -116,7 +119,25 @@ class BatchWorker(QThread):
         self._session_manager = SessionManager()
         self._session: Optional[SessionState] = resume_session
     def request_cancel(self) -> None:
-        self._cancel = True
+        self._cancel.set()
+
+    def _discard_temp(self, temp_wav) -> None:
+        """Delete a per-file temp WAV and stop tracking it under the session lock.
+
+        Routing the untrack through SessionManager.remove_temp_file (rather than
+        mutating state.temp_files directly) keeps it serialized with cleanup and
+        other workers' finally blocks, so concurrent check-then-remove can't raise
+        or corrupt the list.
+        """
+        if not temp_wav:
+            return
+        try:
+            if temp_wav.exists():
+                os.unlink(temp_wav)
+        except OSError:
+            pass
+        if self._session is not None:
+            self._session_manager.remove_temp_file(self._session, str(temp_wav))
 
     def run(self) -> None:
         # Clean up orphaned temp files from previous crashes
@@ -170,6 +191,9 @@ class BatchWorker(QThread):
         # Calculate already processed count for progress
         already_processed = len(self._session.completed_files) + len(self._session.failed_files)
         processed = already_processed
+        # Guards the cross-thread read (progress callback, on worker threads) and
+        # write (main as_completed loop) of `processed`.
+        progress_lock = threading.Lock()
         # Continue the file-banner numbering past anything finished in a prior run.
         self._start_index = already_processed
 
@@ -181,7 +205,7 @@ class BatchWorker(QThread):
             # Type guard: session is guaranteed to be non-None at this point
             assert self._session is not None
 
-            if self._cancel:
+            if self._cancel.is_set():
                 self.file_status.emit(path.name, "Cancelled")
                 self._session_manager.update_file_status(
                     self._session, str(path), "failed", error="Cancelled"
@@ -189,11 +213,13 @@ class BatchWorker(QThread):
                 return None
 
             def _on_file_progress(file_percent: int):
-                if self._cancel:
+                if self._cancel.is_set():
                     raise Exception("Cancelled")
                 # Calculate overall progress
                 if total > 0:
-                    overall = int((processed * 100 + file_percent) / total)
+                    with progress_lock:
+                        current = processed
+                    overall = int((current * 100 + file_percent) / total)
                     self.progress.emit(overall)
 
             # Acquire semaphore to control pipeline - only 1 file can be preprocessing+transcribing at once
@@ -225,20 +251,15 @@ class BatchWorker(QThread):
                     with self._prep_lock:
                         self.file_status.emit(path.name, "Pre-processing")
                         # Pass cancel check to allow killing ffmpeg
-                        temp_wav = self._transcriber.prepare_audio(path, cancel_check=lambda: self._cancel)
+                        temp_wav = self._transcriber.prepare_audio(path, cancel_check=lambda: self._cancel.is_set())
 
                         # Track temp file in session
                         if temp_wav:
                             self._session_manager.add_temp_file(self._session, temp_wav)
 
                     # Check for cancellation immediately after preparation
-                    if self._cancel:
-                        if temp_wav and temp_wav.exists():
-                            try:
-                                import os
-                                os.unlink(temp_wav)
-                            except OSError:
-                                pass
+                    if self._cancel.is_set():
+                        self._discard_temp(temp_wav)
                         self._session_manager.update_file_status(
                             self._session, str(path), "failed", error="Cancelled"
                         )
@@ -249,7 +270,7 @@ class BatchWorker(QThread):
 
                     # 2. Transcribe (Model Step - Sequential)
                     with self._model_lock:
-                        if self._cancel:
+                        if self._cancel.is_set():
                             self.file_status.emit(path.name, "Cancelled")
                             self._session_manager.update_file_status(
                                 self._session, str(path), "failed", error="Cancelled"
@@ -275,7 +296,7 @@ class BatchWorker(QThread):
                             add_timestamps=self._add_timestamps,
                             add_report=self.add_report,
                             pre_converted_path=temp_wav, # Pass the pre-converted file
-                            cancel_check=lambda: self._cancel,
+                            cancel_check=lambda: self._cancel.is_set(),
                         )
 
                     # Update session: file completed
@@ -326,16 +347,9 @@ class BatchWorker(QThread):
                 # This allows the next file to start preprocessing
                 self._pipeline_semaphore.release()
 
-                # 3. Cleanup (Always run, even on error)
-                if temp_wav and temp_wav.exists():
-                    try:
-                        import os
-                        os.unlink(temp_wav)
-                        # Remove from session temp file tracking
-                        if str(temp_wav) in self._session.temp_files:
-                            self._session.temp_files.remove(str(temp_wav))
-                    except OSError:
-                        pass
+                # 3. Cleanup (Always run, even on error) — delete + untrack under
+                # the session lock.
+                self._discard_temp(temp_wav)
 
                 # Lightweight memory cleanup between files
                 MemoryManager.cleanup_between_files()
@@ -346,13 +360,15 @@ class BatchWorker(QThread):
         try:
             futures = {executor.submit(_job, p): p for p in media_files}
             for future in as_completed(futures):
-                if self._cancel:
+                if self._cancel.is_set():
                     # Clean up temp files before exiting
                     self._session_manager.cleanup_temp_files(self._session)
                     self.failed.emit("Cancelled")
                     return
 
-                processed += 1
+                with progress_lock:
+                    processed += 1
+                    current = processed
                 media_path = futures[future]
 
                 result = future.result()
@@ -364,7 +380,7 @@ class BatchWorker(QThread):
 
                 # Emit 100% for this file (or base for next)
                 if total > 0:
-                    overall = int((processed * 100) / total)
+                    overall = int((current * 100) / total)
                     self.progress.emit(overall)
 
         except Exception as exc:

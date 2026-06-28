@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import time
 import logging
+import math
 import subprocess
 import re
 import shutil
@@ -260,22 +261,31 @@ class Transcriber:
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
 
-            while True:
-                if cancel_check and cancel_check():
-                    process.kill()
-                    LOGGER.info("Audio preparation cancelled.")
-                    # Cleanup partial file
-                    if temp_path.exists():
-                        try:
-                            os.unlink(temp_path)
-                        except OSError:
-                            pass
-                    raise Exception("Cancelled")
+            try:
+                while True:
+                    if cancel_check and cancel_check():
+                        process.kill()
+                        LOGGER.info("Audio preparation cancelled.")
+                        # Cleanup partial file
+                        if temp_path.exists():
+                            try:
+                                os.unlink(temp_path)
+                            except OSError:
+                                pass
+                        raise Exception("Cancelled")
 
-                if process.poll() is not None:
-                    break
+                    if process.poll() is not None:
+                        break
 
-                time.sleep(0.1)
+                    time.sleep(0.1)
+            finally:
+                # Reap the child even if the poll loop raised, so the handle never
+                # leaks.
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
 
             if process.returncode != 0:
                 LOGGER.warning(
@@ -326,13 +336,21 @@ class Transcriber:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
             )
 
-            while True:
-                if cancel_check and cancel_check():
-                    process.kill()
-                    raise Exception("Cancelled")
-                if process.poll() is not None:
-                    break
-                time.sleep(0.1)
+            try:
+                while True:
+                    if cancel_check and cancel_check():
+                        process.kill()
+                        raise Exception("Cancelled")
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+            finally:
+                # Reap the child even if the poll loop raised (no handle leak).
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
 
             if process.returncode != 0:
                 LOGGER.error(
@@ -353,7 +371,12 @@ class Transcriber:
                     pass
             if str(e) == "Cancelled":
                 raise
-            LOGGER.error("Failed to slice audio: %s", e)
+            # Classify the cause so the log distinguishes disk-full / permissions
+            # / other ffmpeg failures rather than an opaque message.
+            detail = type(e).__name__
+            if isinstance(e, OSError) and e.errno is not None:
+                detail = f"{detail}(errno={e.errno})"
+            LOGGER.error("Failed to slice audio (%s): %s", detail, e)
             return None
 
     def _find_nearest_silence(self, input_path: Path, start_search: float, search_window: float = 600.0) -> float:
@@ -554,12 +577,16 @@ class Transcriber:
                         )
 
             except Exception as e:  # pylint: disable=broad-except
+                # Record which chunk failed and why; re-raise to fail the file
+                # (we're already chunking, so retrying smaller won't help). Note:
+                # chunks transcribed before this point are discarded with the
+                # generator unwind — the file is reported failed, not partial.
                 LOGGER.error(
-                    "Error processing chunk starting at %s: %s", format_duration(current_time), e)
-                # Try to continue if possible, or raise if critical
-                # For memory error, we really want to stop or retry smaller?
-                # Since we are already chunking, raising is appropriate.
-                raise e
+                    "Error processing chunk [%s -> %s] (%s): %s — failing this file; "
+                    "earlier chunks are discarded.",
+                    format_duration(current_time), format_duration(split_point),
+                    type(e).__name__, e)
+                raise
             finally:
                 if temp_chunk.exists():
                     try:
@@ -734,7 +761,13 @@ class Transcriber:
                             frac * 100, format_duration(elapsed), eta_str)
                 last_log_time = time.time()
 
-            ai_processed_duration += (segment.end - segment.start)
+            seg_duration = segment.end - segment.start
+            if math.isfinite(seg_duration) and seg_duration >= 0:
+                ai_processed_duration += seg_duration
+            else:
+                LOGGER.warning(
+                    "Ignoring segment with non-finite timestamps in the duration "
+                    "metric: start=%s end=%s", segment.start, segment.end)
             text_content = segment.text.strip() if segment.text else ""
             if text_content:
                 if add_timestamps:

@@ -257,7 +257,9 @@ def verify_license_doc(license_doc, current_hwid):
                            "internet, or set your clock to the correct date and time, "
                            "then try again.")
 
-    if current_time > expiry_date:
+    # Compare whole dates: the license is valid through the END of the expiry day,
+    # not until 00:00:00 of it (which would drop the user's entire last day).
+    if current_time.date() > expiry_date.date():
         return False, f"Your subscription ended on {data['expiry']}.\nPlease renew."
 
     # Record the high-water mark only for a fully-valid license, so a rejected
@@ -296,7 +298,9 @@ def verify_license_gui():
     try:
         from activation_dialog import ActivationDialog  # pylint: disable=import-outside-toplevel
     except Exception as exc:  # pylint: disable=broad-except
-        show_error("License Error", f"Activation screen unavailable: {exc}")
+        LOGGER.error("Activation screen failed to load: %s", exc)
+        show_error("License Error",
+                   "The activation screen is unavailable. Please reinstall the application.")
         sys.exit(1)
 
     dialog = ActivationDialog(current_hwid)
@@ -358,7 +362,7 @@ def license_status():
 
     now = datetime.now()
     info["days_left"] = (expiry_date.date() - now.date()).days
-    if now > expiry_date:
+    if now.date() > expiry_date.date():
         info["reason"] = f"Subscription expired on {data['expiry']}."
         return info
 
