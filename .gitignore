@@ -41,8 +41,14 @@ nul
 admin_keys/
 # Customer licenses and build artifacts that must never be committed
 license*.dat
+*.key
 *.bak
 pyarmor_runtime*/
+# Vendor-side issuance registry (and its atomic-write temp files)
+license_registry.json
+.reg_*.tmp
+# Per-machine hardware-ID export from get_hwid.py
+machine_id.txt
 
 # Large redistributable binary (fetched at build time via download_vc_redist.py)
 assets/vc_redist.x64.exe

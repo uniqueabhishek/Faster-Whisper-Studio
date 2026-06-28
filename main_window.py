@@ -6,7 +6,8 @@ import logging
 from pathlib import Path
 from typing import List
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -19,11 +20,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+import license_guard
 from preprocessing_gui import PreprocessingView, PreprocessingWindow
 from gui import TranscriptionView
 from styles import DARK_THEME_QSS, apply_dark_title_bar
 from ui_common import center_window, settings_int
 from ffmpeg_dialog import FfmpegDialog
+from activation_dialog import ActivationDialog
+from license_status_dialog import LicenseStatusDialog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +70,29 @@ _MENU_STYLE = """
     QMenu::item:selected { background-color: #0e639c; color: #ffffff; }
 """
 
+# The Registered/Unregistered chip lives in the menu bar's top-right corner.
+# Color is driven by the dynamic `registered` property (re-polished on change).
+_LICENSE_BTN_STYLE = """
+    QPushButton#LicenseStatusBtn {
+        background: transparent;
+        border: 1px solid #3f3f46;
+        border-radius: 11px;
+        padding: 2px 12px;
+        margin: 0 8px 2px 0;
+        font-weight: 600;
+        color: #9ca3af;
+    }
+    QPushButton#LicenseStatusBtn[registered="true"] {
+        color: #34d399;
+        border-color: #14532d;
+    }
+    QPushButton#LicenseStatusBtn[registered="false"] {
+        color: #f87171;
+        border-color: #7f1d1d;
+    }
+    QPushButton#LicenseStatusBtn:hover { background-color: #2d2d2d; }
+"""
+
 
 class MainWindow(QMainWindow):
     """Main window with sidebar navigation."""
@@ -77,7 +104,8 @@ class MainWindow(QMainWindow):
         # Apply Dark Theme
         app = QApplication.instance()
         if app:
-            app.setStyleSheet(DARK_THEME_QSS + SIDEBAR_STYLE)  # type: ignore[attr-defined]
+            app.setStyleSheet(  # type: ignore[attr-defined]
+                DARK_THEME_QSS + SIDEBAR_STYLE + _LICENSE_BTN_STYLE)
 
         # Apply Windows Dark Title Bar
         apply_dark_title_bar(int(self.winId()))
@@ -92,6 +120,9 @@ class MainWindow(QMainWindow):
 
         # Track separate preprocessing windows
         self._separate_preprocessing_windows: List[PreprocessingWindow] = []
+
+        # Re-entrancy guard for the license-chip dialog.
+        self._license_dialog_open = False
 
         self._build_ui()
         self._build_menu()
@@ -121,6 +152,53 @@ class MainWindow(QMainWindow):
 
         app_update_action = tools_menu.addAction("Check for App Updates…")
         app_update_action.triggered.connect(self._check_app_updates)
+
+        # Registration status chip in the menu bar's top-right corner.
+        self.license_btn = QPushButton()
+        self.license_btn.setObjectName("LicenseStatusBtn")
+        self.license_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.license_btn.setFlat(True)
+        self.license_btn.clicked.connect(self._open_license)
+        menubar.setCornerWidget(self.license_btn, Qt.TopRightCorner)
+        self._refresh_license_button()
+
+    def _refresh_license_button(self) -> None:
+        """Update the corner chip's text/color from the current license status."""
+        status = license_guard.license_status()
+        registered = bool(status["registered"])
+        self.license_btn.setText("●  Registered" if registered else "●  Unregistered")
+        self.license_btn.setToolTip(
+            "Click to view license details"
+            if registered else "Click to enter a license key")
+        # Drive the [registered="true|false"] style selector.
+        self.license_btn.setProperty("registered", registered)
+        self.license_btn.style().unpolish(self.license_btn)
+        self.license_btn.style().polish(self.license_btn)
+
+    def _open_license(self) -> None:
+        """Top-bar chip click: show details when registered, else the key entry."""
+        # Guard against a second click stacking another dialog before exec() blocks.
+        if self._license_dialog_open:
+            return
+        self._license_dialog_open = True
+        try:
+            status = license_guard.license_status()
+            if status["registered"]:
+                dialog = LicenseStatusDialog(status, self)
+                dialog.exec()
+                if dialog.wants_change:
+                    self._open_activation(status["machine_id"])
+            else:
+                self._open_activation(status["machine_id"], reason=status.get("reason", ""))
+            self._refresh_license_button()
+        finally:
+            self._license_dialog_open = False
+
+    def _open_activation(self, machine_id: str, reason: str = "") -> None:
+        """Open the key-entry dialog for re-keying from within the running app."""
+        dialog = ActivationDialog(
+            machine_id, self, cancel_label="Cancel", initial_message=reason)
+        dialog.exec()
 
     def _open_ffmpeg(self) -> None:
         """Open the FFmpeg dialog (shows version/source + update)."""

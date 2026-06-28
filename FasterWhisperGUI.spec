@@ -30,7 +30,18 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Defense in depth: app.py never imports these vendor-only signing/admin
+    # modules, so PyInstaller's analysis already drops them. Exclude them
+    # explicitly so a stray future import can never leak the keygen toolchain
+    # into a customer build. (license_codec / license_guard ARE shipped.)
+    excludes=[
+        'licensing_core',
+        'license_manager_app',
+        'license_manager_window',
+        'admin_keygen',
+        'setup_security',
+        'generate_test_license',
+    ],
     noarchive=False,
     optimize=0,
 )

@@ -107,3 +107,171 @@ def test_is_rollback_logic():
     assert license_guard._is_rollback(base, base) is False
     assert license_guard._is_rollback(base - timedelta(hours=2), base) is False  # within grace
     assert license_guard._is_rollback(base, None) is False  # first run
+
+
+# --- verify_license_doc + key store -------------------------------------------
+
+def _signed_doc(private_key, machine_id, expiry,
+                customer="Acme", issued="2020-01-01"):
+    data = {"customer": customer, "machine_id": machine_id,
+            "expiry": expiry, "issued": issued}
+    sig = base64.b64encode(_sign(private_key, data)).decode()
+    return {"data": data, "signature": sig}
+
+
+def _use_ephemeral_key(monkeypatch):
+    """Point the verifier at a throwaway keypair and a fixed online clock; return
+    the matching private key so the test can sign documents the app will trust."""
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    pub_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    monkeypatch.setattr(license_guard, "PUBLIC_KEY_PEM", pub_pem)
+    monkeypatch.setattr(license_guard, "get_network_time", lambda: datetime(2030, 1, 1))
+    monkeypatch.setattr(license_guard, "_write_last_seen", lambda *a, **k: None)
+    return private_key
+
+
+def test_verify_license_doc_valid(monkeypatch):
+    private_key = _use_ephemeral_key(monkeypatch)
+    doc = _signed_doc(private_key, "hwid-1", "2099-01-01")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert ok, reason
+
+
+def test_verify_license_doc_wrong_machine(monkeypatch):
+    private_key = _use_ephemeral_key(monkeypatch)
+    doc = _signed_doc(private_key, "hwid-OTHER", "2099-01-01")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert not ok
+    assert "different machine" in reason
+
+
+def test_verify_license_doc_expired(monkeypatch):
+    private_key = _use_ephemeral_key(monkeypatch)  # online clock = 2030-01-01
+    doc = _signed_doc(private_key, "hwid-1", "2025-01-01")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert not ok
+    assert "ended on" in reason
+
+
+def test_verify_license_doc_bad_signature(monkeypatch):
+    _use_ephemeral_key(monkeypatch)
+    # Sign with a *different* key than the one the verifier trusts.
+    foreign = ed25519.Ed25519PrivateKey.generate()
+    doc = _signed_doc(foreign, "hwid-1", "2099-01-01")
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert not ok
+    assert "signature" in reason.lower()
+
+
+def test_verify_license_doc_malformed(monkeypatch):
+    _use_ephemeral_key(monkeypatch)
+    ok, reason = license_guard.verify_license_doc({"data": {"machine_id": "x"}}, "hwid-1")
+    assert not ok
+
+
+def _trust_key(monkeypatch, when):
+    """Trust an ephemeral key and pin the online clock to ``when``; spy on writes.
+
+    Returns ``(private_key, write_calls)`` — write_calls records every
+    _write_last_seen invocation so a test can assert whether the high-water mark
+    advanced."""
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    pub_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    monkeypatch.setattr(license_guard, "PUBLIC_KEY_PEM", pub_pem)
+    monkeypatch.setattr(license_guard, "get_network_time", lambda: when)
+    calls = []
+    monkeypatch.setattr(license_guard, "_write_last_seen", lambda *a, **k: calls.append(a))
+    return private_key, calls
+
+
+def test_expired_license_does_not_advance_rollback_state(monkeypatch):
+    private_key, calls = _trust_key(monkeypatch, datetime(2030, 1, 1))
+    doc = _signed_doc(private_key, "hwid-1", "2025-01-01")  # expired vs the 2030 clock
+    ok, reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert not ok and "ended on" in reason
+    assert calls == [], "an expired license must not write the anti-rollback high-water mark"
+
+
+def test_valid_license_advances_rollback_state(monkeypatch):
+    private_key, calls = _trust_key(monkeypatch, datetime(2030, 1, 1))
+    doc = _signed_doc(private_key, "hwid-1", "2099-01-01")
+    ok, _reason = license_guard.verify_license_doc(doc, "hwid-1")
+    assert ok
+    assert len(calls) == 1, "a valid license should record the high-water mark exactly once"
+
+
+def test_full_key_round_trip_through_codec_and_core(monkeypatch):
+    """A key minted by licensing_core decodes and verifies through license_guard."""
+    import licensing_core as core
+    from license_codec import decode_key
+
+    private_key = _use_ephemeral_key(monkeypatch)
+    data = core.build_license_data("Acme", "hwid-1", "2099-01-01")
+    key = core.make_key(private_key, data)
+    ok, reason = license_guard.verify_license_doc(decode_key(key), "hwid-1")
+    assert ok, reason
+
+
+def test_save_and_load_key_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(license_guard, "_appdata_dir", lambda: str(tmp_path))
+    assert license_guard.load_saved_key() is None
+    license_guard.save_key("FWL-some-key-string")
+    assert license_guard.load_saved_key() == "FWL-some-key-string"
+
+
+# --- license_status (network-free UI status) ----------------------------------
+
+def _install_key(monkeypatch, tmp_path, private_key, machine_id, expiry, customer="Acme"):
+    from license_codec import encode_key
+    monkeypatch.setattr(license_guard, "_appdata_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(license_guard, "get_machine_id", lambda: "hwid-1")
+    license_guard.save_key(encode_key(
+        _signed_doc(private_key, machine_id, expiry, customer=customer)))
+
+
+def test_license_status_registered(monkeypatch, tmp_path):
+    private_key = _use_ephemeral_key(monkeypatch)
+    _install_key(monkeypatch, tmp_path, private_key, "hwid-1", "2099-01-01", customer="Acme")
+    status = license_guard.license_status()
+    assert status["registered"] is True
+    assert status["customer"] == "Acme"
+    assert status["expiry"] == "2099-01-01"
+    assert status["machine_id"] == "hwid-1"
+    assert status["days_left"] is not None and status["days_left"] > 0
+    assert status["reason"] == ""
+
+
+def test_license_status_no_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(license_guard, "_appdata_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(license_guard, "get_machine_id", lambda: "hwid-1")
+    status = license_guard.license_status()
+    assert status["registered"] is False
+    assert status["machine_id"] == "hwid-1"
+    assert "No license" in status["reason"]
+
+
+def test_license_status_expired(monkeypatch, tmp_path):
+    private_key = _use_ephemeral_key(monkeypatch)
+    _install_key(monkeypatch, tmp_path, private_key, "hwid-1", "2000-01-01", customer="Acme")
+    status = license_guard.license_status()
+    assert status["registered"] is False
+    assert "expired" in status["reason"].lower()
+    assert status["customer"] == "Acme"  # still surfaced for the details view
+
+
+def test_license_status_wrong_machine(monkeypatch, tmp_path):
+    private_key = _use_ephemeral_key(monkeypatch)
+    _install_key(monkeypatch, tmp_path, private_key, "hwid-OTHER", "2099-01-01",
+                 customer="Acme")
+    status = license_guard.license_status()
+    assert status["registered"] is False
+    assert "different machine" in status["reason"]
+    # Customer/expiry stay visible so the details view can still show them.
+    assert status["customer"] == "Acme"
+    assert status["expiry"] == "2099-01-01"

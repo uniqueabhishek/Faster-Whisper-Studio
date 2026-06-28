@@ -1,65 +1,46 @@
-"""Admin license key generator for customer license files."""
+"""Admin license generator (CLI). Prompts for customer details and prints a
+license KEY string to send to the client. Signing/registry live in licensing_core.
 
-import os
-import json
-import base64
+VENDOR-ONLY — never ship this with the customer build.
+"""
+
 from datetime import datetime
-from cryptography.hazmat.primitives import serialization
 
-KEYS_DIR = "admin_keys"
-PRIVATE_KEY_FILE = os.path.join(KEYS_DIR, "private_key.pem")
-
-
-def load_private_key():
-    """Load the admin private key from disk."""
-    if not os.path.exists(PRIVATE_KEY_FILE):
-        print(f"ERROR: Private key not found at {PRIVATE_KEY_FILE}")
-        print("Please run setup_security.py first!")
-        return None
-
-    with open(PRIVATE_KEY_FILE, "rb") as f:
-        return serialization.load_pem_private_key(f.read(), password=None)
+import licensing_core as core
 
 
 def main():
-    """Prompt for customer details and generate a signed license file."""
-    private_key = load_private_key()
-    if not private_key:
+    """Prompt for customer details and print a signed license key."""
+    try:
+        private_key = core.load_private_key()
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
         return
 
     print("\n--- LICENSE GENERATOR (ADMIN ONLY) ---")
     customer_name = input("Enter Customer Name: ").strip()
     machine_id = input("Enter Customer's Machine ID: ").strip()
-    expiry_str = input("Enter Expiry Date (YYYY-MM-DD): ").strip()
+    if not core.is_valid_machine_id(machine_id):
+        print("Invalid Machine ID — expected 64 hexadecimal characters.")
+        return
 
+    expiry_str = input("Enter Expiry Date (YYYY-MM-DD): ").strip()
     try:
         datetime.strptime(expiry_str, "%Y-%m-%d")
     except ValueError:
         print("Invalid date format! Use YYYY-MM-DD")
         return
 
-    # Canonical schema shared with generate_test_license.py.
-    license_data = {
-        "customer": customer_name,
-        "machine_id": machine_id,
-        "expiry": expiry_str,
-        "issued": datetime.now().strftime("%Y-%m-%d"),
-    }
+    data = core.build_license_data(customer_name, machine_id, expiry_str)
+    key = core.make_key(private_key, data)
 
-    license_json = json.dumps(license_data, sort_keys=True)
-    signature = private_key.sign(license_json.encode())
+    # Record the issuance so the manager can track/renew it later.
+    reg = core.load_registry()
+    core.record_issued(reg, customer_name, machine_id, data["issued"], expiry_str)
+    core.save_registry(reg)
 
-    final_license = {
-        "data": license_data,
-        "signature": base64.b64encode(signature).decode('utf-8')
-    }
-
-    filename = f"license_{customer_name.replace(' ', '_')}.dat"
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(final_license, f, indent=4)
-
-    print(f"\n[SUCCESS] License saved to: {filename}")
-    print("Send this file to the client.")
+    print("\n[SUCCESS] License key — send this single string to the client:\n")
+    print(key)
 
 
 if __name__ == "__main__":
