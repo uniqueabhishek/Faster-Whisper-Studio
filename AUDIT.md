@@ -12,11 +12,16 @@ remediated.
 
 | Bucket | Count |
 |---|---|
-| ✅ Done | 54 |
+| ✅ Done | 83 |
 | 🟡 Partial | 0 |
 | ⚪ Non-essential (accepted) | 1 |
 | 🔴 Pending | 2 |
-| **Total findings** | **57** |
+| **Total findings** | **86** |
+
+A second full 9-dimension re-audit (2026-06-28) of the current code found **0
+regressions** and **29 new** second-order issues (0 Critical · 4 High · 10 Medium
+· 13 Low · 2 Info) — all now fixed (see "Re-audit round 2" below). The 2 pending
+items are unchanged.
 
 **Remaining (2):** both Critical client-side-enforcement issues (a patchable
 boolean and a swappable embedded key) that no purely-offline scheme can close —
@@ -26,7 +31,7 @@ a server-side activation design is in progress to address them.
 > `license.dat` blob); older hashes may not resolve, but every commit is still
 > identifiable by its message. Post-rewrite work references current hashes.
 
-Every test passes (`pytest`, 64 tests) and the GUI constructs headlessly
+Every test passes (`pytest`, 67 tests) and the GUI constructs headlessly
 (offscreen smoke test) after each change.
 
 ---
@@ -130,6 +135,45 @@ modules surfaced and fixed:
 | Sev | Finding | Rationale |
 |---|---|---|
 | Low | Hard-raise cancel discards the partial transcript | Working feature; saving a partial `.txt` carries a UX/design question not worth the regression risk. Accepted as won't-do. |
+
+---
+
+## Re-audit round 2 (2026-06-28) — 29 fixed
+
+A fresh 9-dimension re-audit with adversarial verification (38 of 53 raw findings
+confirmed → 29 distinct). All fixed in `77e114b` (High + concurrency/resource/
+correctness) and `9ef9e40` (cleanups).
+
+### High (4)
+| Finding | Fix |
+|---|---|
+| License expiry off-by-one — rejected at 00:00 on the expiry day, dropping the user's last day | Compare whole dates (valid through end of the expiry day) + boundary tests |
+| `decode_key` had no input bound (activation-path DoS on a huge pasted key) | Reject input over 8 KB before any base64/JSON work |
+| Build could silently ship without bundled ffmpeg | `build_exe.py`/`build_for_customer.py` assert `assets/ffmpeg/ffmpeg.exe`; README documents the download step |
+| Unlocked mutation of `temp_files` in the worker `finally` (races cleanup/other workers) | Route delete + untrack through a lock-held `SessionManager.remove_temp_file` |
+
+### Medium (10)
+| Finding | Fix |
+|---|---|
+| `processed` progress counter read across threads unlocked | Guarded with a lock |
+| `_cancel` bare bool (no cross-thread visibility guarantee) | `threading.Event` |
+| Session state shared without snapshot | Covered by routing all `temp_files` access through the lock |
+| Subprocess handle leak across 7 ffmpeg `Popen`+poll loops | One `_run_ffmpeg_op` helper (audio) + `try/finally` (transcriber) always reaps the child |
+| Resume trusted input paths from JSON | Session file signed with a machine-independent HMAC; a tampered/planted file is refused |
+| `cleanup_temp_files` could delete an arbitrary/symlinked path | Only deletes our own `fwgui_` temp WAVs; never follows symlinks |
+| VAD ffmpeg fallback ignored the user's params | Honors `min_silence_ms` (threshold has no ffmpeg-dB equivalent — documented) |
+| Raw exception text in the global crash dialog | Generic message; traceback to log + Details |
+| Raw exception text on activation-screen import failure | Generic message; detail logged |
+| Chunked-transcription error context / progress loss | Logs chunk range + type; documents that earlier chunks are discarded |
+
+### Low / Info (15)
+Generic license-manager dialog messages · classify slice-failure cause · NaN/inf
+guard on the duration metric · validate/clamp loudnorm + filter params · dep
+ceilings (`PySide6<7`, `faster-whisper<2`, `librosa<1`) · screenshots excluded from
+the exe · dedup the file-status updater and the slider-row helper · centralize NR
+presets and the cancel-button style · module-level `QTimer` import · duplicate
+comment removed · `get_values` contract documented · slider lambda discards its
+value explicitly.
 
 ---
 
