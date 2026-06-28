@@ -8,6 +8,7 @@ NEVER be bundled into the customer build.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from PySide6.QtCore import QDate, Qt
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
 
 import licensing_core as core
 from styles import apply_dark_title_bar
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _copy_to_clipboard(text: str) -> None:
@@ -119,7 +122,9 @@ class GenerateTab(QWidget):
             with open(path, encoding="utf-8") as f:
                 self._machine_id.setText(f.read().strip())
         except OSError as exc:
-            QMessageBox.warning(self, "Could not read file", str(exc))
+            LOGGER.warning("Could not read machine_id file: %s", exc)
+            QMessageBox.warning(self, "Could not read file",
+                                "Could not read that file. Check that it exists and is readable.")
 
     def _on_generate(self) -> None:
         customer = self._customer.text().strip()
@@ -366,7 +371,9 @@ class KeysTab(QWidget):
         try:
             core.generate_keypair_and_embed()
         except (FileNotFoundError, ValueError) as exc:
-            QMessageBox.critical(self, "Regeneration failed", str(exc))
+            LOGGER.error("Keypair regeneration failed: %s", exc)
+            QMessageBox.critical(self, "Regeneration failed",
+                                 "Key regeneration failed. See the log for details.")
             return
         self._window.invalidate_private_key()
         self._ack.setChecked(False)

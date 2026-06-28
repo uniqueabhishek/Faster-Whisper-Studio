@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
+from typing import Any, Dict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -19,6 +19,13 @@ from PySide6.QtWidgets import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+# Noise-reduction presets: name -> (noise_reduction_dB, noise_floor_dB, gain_smooth).
+NOISE_REDUCTION_PRESETS: Dict[str, tuple] = {
+    "Light": (8, -35, 0),
+    "Medium": (12, -25, 3),
+    "Heavy": (18, -20, 5),
+}
 
 
 class ConfigDialogBase(QDialog):
@@ -55,8 +62,43 @@ class ConfigDialogBase(QDialog):
 
         self.main_layout.addLayout(button_layout)
 
-    def get_values(self) -> Dict:
-        """Override to return configuration values."""
+    def _create_slider_with_label(self, title, min_val, max_val, default,
+                                  unit="", left_label="", right_label="", fmt=None):
+        """Create a labeled slider row and return ``(slider, value_label)``.
+
+        Shared by every config dialog (previously copy-pasted in all four).
+        ``fmt`` is an optional ``callable(int) -> str`` for the live value text;
+        it defaults to ``f"{value}{unit}"``.
+        """
+        if fmt is None:
+            def fmt(v):  # noqa: E306
+                return f"{v}{unit}"
+
+        self.main_layout.addWidget(QLabel(title))
+
+        range_layout = QHBoxLayout()
+        range_layout.addWidget(QLabel(left_label))
+        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
+        slider.setMinimum(min_val)
+        slider.setMaximum(max_val)
+        slider.setValue(default)
+        range_layout.addWidget(slider)
+        range_layout.addWidget(QLabel(right_label))
+        self.main_layout.addLayout(range_layout)
+
+        value_label = QLabel(fmt(default))
+        value_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
+        value_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
+        slider.valueChanged.connect(lambda v: value_label.setText(fmt(v)))
+        self.main_layout.addWidget(value_label)
+        return slider, value_label
+
+    def get_values(self) -> Dict[str, Any]:
+        """Return this dialog's settings as ``{PreprocessingConfig field: value}``.
+
+        Overridden by every subclass; the keys match ``PreprocessingConfig``
+        attribute names so the result can be applied directly.
+        """
         raise NotImplementedError
 
 
@@ -117,45 +159,17 @@ class NoiseReductionConfigDialog(ConfigDialogBase):
         # Update preview on slider changes
         for slider in [self.nr_slider, self.nf_slider, self.gs_slider]:
             slider.valueChanged.connect(self._update_preview)
-            slider.valueChanged.connect(lambda: self.preset_combo.setCurrentText("Custom"))
+            slider.valueChanged.connect(
+                lambda _v: self.preset_combo.setCurrentText("Custom"))
 
         # Set initial preset
         self._update_preview()
         self.preset_combo.setCurrentText("Medium")
 
-    def _create_slider_with_label(self, title, min_val, max_val, default, unit, left_label, right_label):
-        """Helper to create labeled slider."""
-        self.main_layout.addWidget(QLabel(title))
-
-        range_layout = QHBoxLayout()
-        range_layout.addWidget(QLabel(left_label))
-
-        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
-        slider.setMinimum(min_val)
-        slider.setMaximum(max_val)
-        slider.setValue(default)
-        range_layout.addWidget(slider)
-
-        range_layout.addWidget(QLabel(right_label))
-        self.main_layout.addLayout(range_layout)
-
-        value_label = QLabel(f"{default}{unit}")
-        value_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
-        value_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
-        slider.valueChanged.connect(lambda v: value_label.setText(f"{v}{unit}"))
-        self.main_layout.addWidget(value_label)
-
-        return slider, value_label
-
     def _on_preset_changed(self, preset_name):
         """Load preset values."""
-        presets = {
-            "Light": (8, -35, 0),
-            "Medium": (12, -25, 3),
-            "Heavy": (18, -20, 5),
-        }
-        if preset_name in presets:
-            nr, nf, gs = presets[preset_name]
+        if preset_name in NOISE_REDUCTION_PRESETS:
+            nr, nf, gs = NOISE_REDUCTION_PRESETS[preset_name]
             self.nr_slider.setValue(nr)
             self.nf_slider.setValue(nf)
             self.gs_slider.setValue(gs)
@@ -223,30 +237,6 @@ class MusicRemovalConfigDialog(ConfigDialogBase):
 
         self._update_preview()
 
-    def _create_slider_with_label(self, title, min_val, max_val, default, unit, left_label, right_label):
-        """Helper to create labeled slider."""
-        self.main_layout.addWidget(QLabel(title))
-
-        range_layout = QHBoxLayout()
-        range_layout.addWidget(QLabel(left_label))
-
-        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
-        slider.setMinimum(min_val)
-        slider.setMaximum(max_val)
-        slider.setValue(default)
-        range_layout.addWidget(slider)
-
-        range_layout.addWidget(QLabel(right_label))
-        self.main_layout.addLayout(range_layout)
-
-        value_label = QLabel(f"{default}{unit}")
-        value_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
-        value_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
-        slider.valueChanged.connect(lambda v: value_label.setText(f"{v}{unit}"))
-        self.main_layout.addWidget(value_label)
-
-        return slider, value_label
-
     def _update_preview(self):
         """Update preview command text."""
         hp = self.highpass_slider.value()
@@ -280,12 +270,12 @@ class NormalizationConfigDialog(ConfigDialogBase):
             left_label="Quiet", right_label="Loud"
         )
 
-        # True Peak slider
+        # True Peak slider (slider is integer; display as one-decimal dB)
         self.tp_slider, self.tp_label = self._create_slider_with_label(
             "True Peak Limit:",
             min_val=-30, max_val=-5, default=int(self.tp_value * 10),  # Scale to int
-            unit="",  # Will be formatted in update function
-            left_label="Safe", right_label="Maximum"
+            left_label="Safe", right_label="Maximum",
+            fmt=lambda v: f"{v / 10.0:.1f} dB",
         )
 
         # Loudness Range slider
@@ -307,36 +297,6 @@ class NormalizationConfigDialog(ConfigDialogBase):
             slider.valueChanged.connect(self._update_preview)
 
         self._update_preview()
-
-    def _create_slider_with_label(self, title, min_val, max_val, default, unit, left_label, right_label):
-        """Helper to create labeled slider."""
-        self.main_layout.addWidget(QLabel(title))
-
-        range_layout = QHBoxLayout()
-        range_layout.addWidget(QLabel(left_label))
-
-        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
-        slider.setMinimum(min_val)
-        slider.setMaximum(max_val)
-        slider.setValue(default)
-        range_layout.addWidget(slider)
-
-        range_layout.addWidget(QLabel(right_label))
-        self.main_layout.addLayout(range_layout)
-
-        value_label = QLabel(f"{default}{unit}")
-        value_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
-        value_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
-
-        # Special handling for TP slider (decimal formatting)
-        if "True Peak" in title:
-            slider.valueChanged.connect(lambda v: value_label.setText(f"{v / 10.0:.1f} dB"))
-        else:
-            slider.valueChanged.connect(lambda v: value_label.setText(f"{v}{unit}"))
-
-        self.main_layout.addWidget(value_label)
-
-        return slider, value_label
 
     def _update_preview(self):
         """Update preview command text."""
@@ -381,12 +341,12 @@ class VADConfigDialog(ConfigDialogBase):
             left_label="None", right_label="Extra Safe (2s)"
         )
 
-        # Detection Threshold slider (scaled by 100 for integer slider)
+        # Detection Threshold slider (slider is integer; display as 0.00-1.00)
         self.threshold_slider, self.threshold_label = self._create_slider_with_label(
             "Speech Detection Threshold:",
             min_val=5, max_val=50, default=int(self.threshold_value * 100),
-            unit="",  # Will be formatted in update function
-            left_label="Very Sensitive", right_label="Less Sensitive"
+            left_label="Very Sensitive", right_label="Less Sensitive",
+            fmt=lambda v: f"{v / 100.0:.2f}",
         )
 
         # Preview config
@@ -400,36 +360,6 @@ class VADConfigDialog(ConfigDialogBase):
             slider.valueChanged.connect(self._update_preview)
 
         self._update_preview()
-
-    def _create_slider_with_label(self, title, min_val, max_val, default, unit, left_label, right_label):
-        """Helper to create labeled slider."""
-        self.main_layout.addWidget(QLabel(title))
-
-        range_layout = QHBoxLayout()
-        range_layout.addWidget(QLabel(left_label))
-
-        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
-        slider.setMinimum(min_val)
-        slider.setMaximum(max_val)
-        slider.setValue(default)
-        range_layout.addWidget(slider)
-
-        range_layout.addWidget(QLabel(right_label))
-        self.main_layout.addLayout(range_layout)
-
-        value_label = QLabel(f"{default}{unit}")
-        value_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
-        value_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
-
-        # Special handling for threshold slider (decimal formatting)
-        if "Threshold" in title:
-            slider.valueChanged.connect(lambda v: value_label.setText(f"{v / 100.0:.2f}"))
-        else:
-            slider.valueChanged.connect(lambda v: value_label.setText(f"{v}{unit}"))
-
-        self.main_layout.addWidget(value_label)
-
-        return slider, value_label
 
     def _update_preview(self):
         """Update preview config text."""

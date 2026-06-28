@@ -5,15 +5,18 @@ description = "A powerful desktop GUI application for accurate audio/video trans
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "PySide6>=6.6.0",
-    "faster-whisper>=1.0.0",
+    # Upper bounds on the framework / core integrations: a new major could break
+    # the UI or the transcription contract without warning (ctranslate2 is already
+    # hard-pinned, so faster-whisper is kept in its tested 1.x line).
+    "PySide6>=6.6.0,<7",
+    "faster-whisper>=1.0.0,<2",
     "ctranslate2==4.4.0",
     "tokenizers>=0.13.0",
     "huggingface-hub>=0.21.0",
     "onnxruntime>=1.14.0",
     "psutil>=5.9.0",
     "soundfile==0.13.1",
-    "librosa>=0.10.0",
+    "librosa>=0.10.0,<1",
     "python-docx>=0.8.11",
     "cryptography>=46.0.4,<47",
     "wmi>=1.5.1",

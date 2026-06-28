@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, Signal, QObject, QUrl, QSettings
+from PySide6.QtCore import Qt, Signal, QObject, QUrl, QSettings, QTimer
 from PySide6.QtGui import QCursor, QDragEnterEvent, QDropEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,7 +45,10 @@ from workers import BatchWorker, ModelLoaderWorker
 from styles import DARK_THEME_QSS, apply_dark_title_bar
 from session_manager import SessionManager, SessionState
 from resume_dialog import ResumeSessionDialog
-from ui_common import MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window, settings_bool
+from ui_common import (
+    MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window, settings_bool,
+    update_file_list_status,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -108,7 +111,6 @@ class TranscriptionView(QWidget):
         self._load_settings()
 
         # Check for incomplete sessions AFTER UI is built (lazy init session manager)
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(500, self._check_for_resume_session)
 
         # Add initial files to queue if provided
@@ -372,30 +374,8 @@ class TranscriptionView(QWidget):
         right_layout.addWidget(self.start_btn)
 
         self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("CancelBtn")  # styled by the theme (#CancelBtn)
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ef4444;
-                color: white;
-                font-weight: 600;
-                border: 1px solid #ef4444;
-                border-radius: 8px;
-                padding: 9px 18px;
-            }
-            QPushButton:hover {
-                background-color: #dc2626;
-                border-color: #f87171;
-            }
-            QPushButton:pressed {
-                background-color: #b91c1c;
-                border-color: #b91c1c;
-            }
-            QPushButton:disabled {
-                background-color: #262626;
-                border-color: #333333;
-                color: #6b7280;
-            }
-        """)
         self.cancel_btn.clicked.connect(self.on_cancel_clicked)
         right_layout.addWidget(self.cancel_btn)
 
@@ -643,7 +623,6 @@ class TranscriptionView(QWidget):
             return
 
         # Collect files
-        # Collect files
         input_files = []
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
@@ -787,19 +766,7 @@ class TranscriptionView(QWidget):
                 thread.wait(5000)
 
     def on_file_status_update(self, filename: str, status: str) -> None:
-        # Find the item in the list and update it
-        for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            # We stored the original full path in UserRole
-            full_path_str = item.data(Qt.UserRole)
-            if full_path_str:
-                # Worker emits only the filename (path.name), so we compare names
-                if Path(full_path_str).name == filename:
-                    # Update text: "1. filename.mp3 [Processing]"
-                    item.setText(f"{i+1}. {filename} [{status}]")
-                    # Optional: Scroll to item
-                    self.file_list.scrollToItem(item)
-                    break
+        update_file_list_status(self.file_list, filename, status)
 
     def on_progress(self, percent: int) -> None:
         self.progress_bar.setValue(percent)

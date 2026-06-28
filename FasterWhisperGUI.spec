@@ -6,9 +6,18 @@ build) invoke this spec, so the bundled data, hidden imports, collected packages
 and icon stay consistent across both paths.
 """
 
+import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets'), ('Resource', 'Resource')]
+# Bundle Resource wholesale, but assets selectively: skip the documentation
+# screenshots (they're only for the README and add dead weight to the exe).
+datas = [('Resource', 'Resource')]
+for _root, _dirs, _files in os.walk('assets'):
+    for _fn in _files:
+        if _fn.startswith('screenshot-'):
+            continue
+        datas.append((os.path.join(_root, _fn), _root))
+
 binaries = []
 hiddenimports = ['soundfile', 'faster_whisper']
 

@@ -43,7 +43,7 @@ from preprocessing_config_dialogs import (
 
 from ui_common import (
     MEDIA_FILTER, QtLogHandler, DragDropWidget, center_window,
-    settings_bool, settings_int, make_settings_button,
+    settings_bool, settings_int, make_settings_button, update_file_list_status,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -611,7 +611,7 @@ class PreprocessingBase(QWidget):
         self._worker = PreprocessingWorker(input_files, config)
         self._worker.progress.connect(self.on_progress)
         self._worker.step_progress.connect(self.on_step_progress)
-        self._worker.file_status.connect(self.on_file_status)
+        self._worker.file_status.connect(self.on_file_status_update)
         self._worker.finished.connect(self.on_preprocessing_finished)
         self._worker.failed.connect(self.on_preprocessing_failed)
 
@@ -645,15 +645,9 @@ class PreprocessingBase(QWidget):
         msg = f"[{filename}] {step_name}... ({step_percent}%)"
         LOGGER.info(msg)
 
-    def on_file_status(self, filename: str, status: str) -> None:
+    def on_file_status_update(self, filename: str, status: str) -> None:
         """Update file status in list."""
-        for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            path_str = item.data(Qt.UserRole)  # type: ignore[union-attr, attr-defined]
-            if path_str and Path(path_str).name == filename:
-                item.setText(f"{i+1}. {filename} [{status}]")  # type: ignore[union-attr]
-                self.file_list.scrollToItem(item)
-                break
+        update_file_list_status(self.file_list, filename, status)
 
     def on_preprocessing_finished(self, preprocessed_files: List[Path]) -> None:
         """Handle preprocessing completion."""

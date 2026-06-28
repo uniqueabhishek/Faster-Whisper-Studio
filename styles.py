@@ -150,6 +150,29 @@ QPushButton#SecondaryBtn:disabled {
     color: #6b7280;
 }
 
+/* Cancel / destructive button (red) — centralized so views don't carry inline CSS */
+QPushButton#CancelBtn {
+    background-color: #ef4444;
+    color: #ffffff;
+    border: 1px solid #ef4444;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-weight: 600;
+}
+QPushButton#CancelBtn:hover {
+    background-color: #dc2626;
+    border-color: #f87171;
+}
+QPushButton#CancelBtn:pressed {
+    background-color: #b91c1c;
+    border-color: #b91c1c;
+}
+QPushButton#CancelBtn:disabled {
+    background-color: #262626;
+    border-color: #333333;
+    color: #6b7280;
+}
+
 /* Settings (gear) buttons — circular icon button (fixed 30x30).
    padding:0 keeps the base 8px 16px padding from clipping the ⚙ glyph. */
 QPushButton#SettingsBtn {

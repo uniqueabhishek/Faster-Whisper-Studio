@@ -205,3 +205,19 @@ def center_window(window: QWidget) -> None:
     if screen is not None:
         frame_gm.moveCenter(screen.availableGeometry().center())
         window.move(frame_gm.topLeft())
+
+
+def update_file_list_status(file_list, filename: str, status: str) -> None:
+    """Update a file row's text to ``"<n>. <filename> [<status>]"`` and reveal it.
+
+    Rows store their original full path in ``Qt.UserRole``; the worker emits only
+    the basename, so match by ``Path(...).name``. Shared by the transcription and
+    preprocessing views, which previously kept divergent copies of this loop.
+    """
+    for i in range(file_list.count()):
+        item = file_list.item(i)
+        full_path_str = item.data(Qt.UserRole)
+        if full_path_str and Path(full_path_str).name == filename:
+            item.setText(f"{i + 1}. {filename} [{status}]")
+            file_list.scrollToItem(item)
+            break

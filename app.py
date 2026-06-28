@@ -51,7 +51,9 @@ def exception_hook(exctype, value, tb):
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle("Fatal Error")
-        msg.setText(f"An unhandled error occurred:\n\n{str(value)}")
+        # Keep internal details (paths, messages) out of the headline; the full
+        # traceback stays available under "Show Details" and in the log file.
+        msg.setText("An unexpected error occurred. See the log file for details.")
         msg.setDetailedText(error_msg)
         msg.exec()
     except Exception:  # pylint: disable=broad-except
